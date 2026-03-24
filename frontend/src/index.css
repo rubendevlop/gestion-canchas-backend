@@ -1,0 +1,38 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=Manrope:wght@400;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-background text-on_surface font-inter antialiased;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-manrope font-semibold tracking-tight;
+  }
+}
+
+@layer components {
+  /* Minimalismo de Capas Infinitas */
+  .glass-panel {
+    @apply bg-surface_container/70 backdrop-blur-xl border border-outline_variant/15;
+  }
+
+  .btn-primary {
+    @apply bg-primary-gradient text-[#001849] px-6 py-3 rounded-2xl font-semibold shadow-lg shadow-primary_container/20 transition-all duration-300 hover:scale-[1.02] hover:shadow-primary_container/40;
+  }
+
+  .btn-secondary {
+    @apply bg-surface_container_highest text-on_surface px-6 py-3 rounded-2xl font-medium transition-all duration-300 hover:bg-surface_bright;
+  }
+  
+  .card {
+    @apply bg-surface_container_high rounded-3xl p-6 border border-outline_variant/10;
+  }
+
+  .input-field {
+    @apply bg-surface_container_low w-full text-on_surface placeholder-on_surface_variant rounded-xl px-4 py-3 border border-transparent focus:border-primary/30 focus:shadow-[0_0_15px_rgba(180,197,255,0.1)] outline-none transition-all duration-300;
+  }
+}
