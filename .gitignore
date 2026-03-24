@@ -5,6 +5,8 @@ node_modules/
 .env
 .env.*
 !.env.example
+firebase-key.json
+firebase-base64.txt
 
 # Logs
 npm-debug.log*
