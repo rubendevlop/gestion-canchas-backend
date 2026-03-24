@@ -17,8 +17,9 @@ export const registerUser = async (req, res) => {
       email,
       displayName: displayName || name || email.split('@')[0],
       photoURL: picture,
-      // Solo 'client' u 'owner' pueden auto-asignarse. 'superadmin' se asigna manualmente.
       role: req.body.registerAs === 'owner' ? 'owner' : 'client',
+      // Los owners quedan PENDING hasta aprobación del superadmin
+      ownerStatus: req.body.registerAs === 'owner' ? 'PENDING' : null,
     });
     
     await user.save();
@@ -64,7 +65,10 @@ export const getCurrentUser = async (req, res) => {
 // GET /api/users  → Solo superadmin
 export const listUsers = async (req, res) => {
   try {
-    const users = await User.find().select('-__v').sort({ createdAt: -1 });
+    const filter = {};
+    if (req.query.role)        filter.role        = req.query.role;
+    if (req.query.ownerStatus) filter.ownerStatus = req.query.ownerStatus;
+    const users = await User.find(filter).select('-__v').sort({ createdAt: -1 });
     res.json(users);
   } catch (error) {
     res.status(500).json({ message: 'Error listando usuarios', error: error.message });
@@ -81,12 +85,42 @@ export const updateUserRole = async (req, res) => {
     }
     const user = await User.findByIdAndUpdate(
       req.params.id,
-      { role },
+      { role, ownerStatus: role === 'owner' ? 'PENDING' : null, ownerStatusNote: '' },
       { new: true, runValidators: true }
     ).select('-__v');
     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
     res.json(user);
   } catch (error) {
     res.status(500).json({ message: 'Error actualizando rol', error: error.message });
+  }
+};
+
+// PATCH /api/users/:id/approve  → Solo superadmin
+export const approveOwner = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+    if (user.role !== 'owner') return res.status(400).json({ message: 'Solo se pueden aprobar cuentas con rol owner.' });
+    user.ownerStatus = 'APPROVED';
+    user.ownerStatusNote = req.body.note || '';
+    await user.save();
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Error aprobando owner', error: error.message });
+  }
+};
+
+// PATCH /api/users/:id/reject  → Solo superadmin
+export const rejectOwner = async (req, res) => {
+  try {
+    const user = await User.findById(req.params.id);
+    if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
+    if (user.role !== 'owner') return res.status(400).json({ message: 'Solo se pueden rechazar cuentas con rol owner.' });
+    user.ownerStatus = 'REJECTED';
+    user.ownerStatusNote = req.body.reason || '';
+    await user.save();
+    res.json(user);
+  } catch (error) {
+    res.status(500).json({ message: 'Error rechazando owner', error: error.message });
   }
 };
