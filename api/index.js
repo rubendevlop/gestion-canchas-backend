@@ -12,9 +12,6 @@ import orderRoutes from '../src/routes/orderRoutes.js';
 
 dotenv.config();
 
-// Inicializar BD
-connectDB();
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
@@ -37,6 +34,11 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+// Middleware: garantizar conexión a MongoDB antes de procesar cada request (necesario en serverless)
+app.use(async (req, res, next) => {
+  await connectDB();
+  next();
+});
 app.use(express.json());
 
 // Montaje de Rutas de la API

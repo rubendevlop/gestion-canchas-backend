@@ -2,7 +2,6 @@ import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 
 dotenv.config();
-mongoose.set('bufferCommands', false);
 
 const globalMongoose = globalThis;
 
