@@ -8,6 +8,7 @@ const courtSchema = new mongoose.Schema({
   pricePerHour: { type: Number, required: true },
   isAvailable: { type: Boolean, default: true },
   images: [{ type: String }],
+  complexId: { type: mongoose.Schema.Types.ObjectId, ref: 'Complex', required: true }
 }, { timestamps: true });
 
 export default mongoose.model('Court', courtSchema);

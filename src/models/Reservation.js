@@ -3,6 +3,7 @@ import mongoose from 'mongoose';
 const reservationSchema = new mongoose.Schema({
   user: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
   court: { type: mongoose.Schema.Types.ObjectId, ref: 'Court', required: true },
+  complexId: { type: mongoose.Schema.Types.ObjectId, ref: 'Complex', required: true },
   date: { type: Date, required: true },
   startTime: { type: String, required: true }, // formato HH:mm
   endTime: { type: String, required: true },

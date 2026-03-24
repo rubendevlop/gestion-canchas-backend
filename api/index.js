@@ -6,6 +6,9 @@ import { verifyAuth } from '../src/middlewares/authMiddleware.js';
 import courtRoutes from '../src/routes/courtRoutes.js';
 import userRoutes from '../src/routes/userRoutes.js';
 import reservationRoutes from '../src/routes/reservationRoutes.js';
+import complexRoutes from '../src/routes/complexRoutes.js';
+import productRoutes from '../src/routes/productRoutes.js';
+import orderRoutes from '../src/routes/orderRoutes.js';
 
 dotenv.config();
 
@@ -23,6 +26,9 @@ app.use(express.json());
 app.use('/api/courts', courtRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reservations', reservationRoutes);
+app.use('/api/complexes', complexRoutes);
+app.use('/api/products', productRoutes);
+app.use('/api/orders', orderRoutes);
 
 // Ruta Base
 app.get('/', (req, res) => {

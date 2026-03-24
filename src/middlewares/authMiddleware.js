@@ -61,3 +61,31 @@ export const verifyAuth = async (req, res, next) => {
     return res.status(403).json({ error: 'Token invalido o expirado' });
   }
 };
+
+import User from '../models/User.js';
+
+export const requireRole = (allowedRoles) => {
+  return async (req, res, next) => {
+    try {
+      if (!req.user || !req.user.uid) {
+        return res.status(401).json({ error: 'Usuario no autenticado' });
+      }
+      
+      const user = await User.findOne({ uid: req.user.uid });
+      if (!user) {
+        return res.status(404).json({ error: 'Usuario no existe en la base de datos' });
+      }
+
+      if (!allowedRoles.includes(user.role)) {
+        return res.status(403).json({ error: 'Permisos insuficientes para esta acción' });
+      }
+
+      // Adjuntar el usuario de la DB para uso posterior
+      req.dbUser = user;
+      next();
+    } catch (error) {
+      console.error('Error verificando roles:', error);
+      res.status(500).json({ error: 'Error validando permisos de usuario' });
+    }
+  };
+};
