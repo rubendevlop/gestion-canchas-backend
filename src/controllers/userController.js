@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import { resolveDbUser } from '../utils/resolveDbUser.js';
 
 // POST /api/users/register
 // Solo permite el registro intencional
@@ -7,7 +8,7 @@ export const registerUser = async (req, res) => {
     const { uid, email, name, picture } = req.user; // Firebase Auth
     const { displayName } = req.body || {}; // Enviado desde el formulario (seguro frente a undefined)
 
-    let user = await User.findOne({ uid });
+    let user = await User.findOne({ $or: [{ uid }, { email }] });
     if (user) {
       return res.status(400).json({ message: 'El usuario ya se encuentra registrado.' });
     }
@@ -33,9 +34,7 @@ export const registerUser = async (req, res) => {
 // Falla estrictamente si el usuario no existe en la BD
 export const loginUser = async (req, res) => {
   try {
-    const { uid } = req.user; 
-
-    const user = await User.findOne({ uid });
+    const user = await resolveDbUser(req.user);
 
     if (!user) {
       return res.status(403).json({ 
@@ -53,7 +52,7 @@ export const loginUser = async (req, res) => {
 // Obtiene el perfil actual
 export const getCurrentUser = async (req, res) => {
   try {
-    const user = await User.findOne({ uid: req.user.uid });
+    const user = await resolveDbUser(req.user);
     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
     
     res.json(user);

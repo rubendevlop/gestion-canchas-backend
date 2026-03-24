@@ -1,4 +1,5 @@
 import admin from 'firebase-admin';
+import { resolveDbUser } from '../utils/resolveDbUser.js';
 
 let firebaseInitError = null;
 
@@ -62,8 +63,6 @@ export const verifyAuth = async (req, res, next) => {
   }
 };
 
-import User from '../models/User.js';
-
 export const requireRole = (allowedRoles) => {
   return async (req, res, next) => {
     try {
@@ -71,7 +70,7 @@ export const requireRole = (allowedRoles) => {
         return res.status(401).json({ error: 'Usuario no autenticado' });
       }
       
-      const user = await User.findOne({ uid: req.user.uid });
+      const user = await resolveDbUser(req.user);
       if (!user) {
         return res.status(404).json({ error: 'Usuario no existe en la base de datos' });
       }
