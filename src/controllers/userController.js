@@ -5,7 +5,7 @@ import User from '../models/User.js';
 export const registerUser = async (req, res) => {
   try {
     const { uid, email, name, picture } = req.user; // Firebase Auth
-    const { displayName } = req.body; // Enviado desde el formulario (opcional)
+    const { displayName } = req.body || {}; // Enviado desde el formulario (seguro frente a undefined)
 
     let user = await User.findOne({ uid });
     if (user) {
