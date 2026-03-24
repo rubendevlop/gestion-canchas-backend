@@ -9,6 +9,7 @@ import reservationRoutes from '../src/routes/reservationRoutes.js';
 import complexRoutes from '../src/routes/complexRoutes.js';
 import productRoutes from '../src/routes/productRoutes.js';
 import orderRoutes from '../src/routes/orderRoutes.js';
+import dashboardRoutes from '../src/routes/dashboardRoutes.js';
 
 dotenv.config();
 
@@ -31,7 +32,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
 // Middleware: garantizar conexión a MongoDB antes de procesar cada request (necesario en serverless)
@@ -48,6 +49,7 @@ app.use('/api/reservations', reservationRoutes);
 app.use('/api/complexes', complexRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
+app.use('/api/dashboard', dashboardRoutes);
 
 // Ruta Base
 app.get('/', (req, res) => {
