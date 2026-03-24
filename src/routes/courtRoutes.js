@@ -1,10 +1,18 @@
 import express from 'express';
-import { getCourts, createCourt } from '../controllers/courtController.js';
-import { verifyAuth } from '../middlewares/authMiddleware.js';
+import {
+  getCourts, getCourtById, createCourt, updateCourt, deleteCourt
+} from '../controllers/courtController.js';
+import { verifyAuth, requireRole } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
-router.get('/', getCourts); // Público: Ver canchas disponibles
-router.post('/', verifyAuth, createCourt); // Privado: Agregar canchas
+// Públicas (para portal de clientes)
+router.get('/', getCourts);
+router.get('/:id', getCourtById);
+
+// Privadas (solo owner/superadmin)
+router.post('/', verifyAuth, requireRole(['owner', 'superadmin']), createCourt);
+router.put('/:id', verifyAuth, requireRole(['owner', 'superadmin']), updateCourt);
+router.delete('/:id', verifyAuth, requireRole(['owner', 'superadmin']), deleteCourt);
 
 export default router;

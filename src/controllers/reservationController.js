@@ -108,7 +108,21 @@ export const cancelReservation = async (req, res) => {
   }
 };
 
-// GET /api/reservations  → todas las del complejo (para el owner)
+// PATCH /api/reservations/:id/confirm → owner confirma reserva
+export const confirmReservation = async (req, res) => {
+  try {
+    const reservation = await Reservation.findById(req.params.id);
+    if (!reservation) return res.status(404).json({ message: 'Reserva no encontrada' });
+    if (reservation.status === 'CANCELLED') return res.status(400).json({ message: 'No se puede confirmar una reserva cancelada.' });
+    reservation.status = 'CONFIRMED';
+    await reservation.save();
+    res.json({ message: 'Reserva confirmada', reservation });
+  } catch (error) {
+    res.status(500).json({ message: 'Error confirmando la reserva', error: error.message });
+  }
+};
+
+// GET /api/reservations → todas las del complejo (para el owner)
 export const getComplexReservations = async (req, res) => {
   try {
     const { complexId, date } = req.query;
@@ -126,3 +140,4 @@ export const getComplexReservations = async (req, res) => {
     res.status(500).json({ message: 'Error obteniendo reservas del complejo', error: error.message });
   }
 };
+
