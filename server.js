@@ -14,7 +14,6 @@ import ownerBillingRoutes from './src/routes/ownerBillingRoutes.js';
 import mediaRoutes from './src/routes/mediaRoutes.js';
 import paymentAccountRoutes from './src/routes/paymentAccountRoutes.js';
 
-// Inicializar BD
 connectDB();
 
 const app = express();
@@ -29,7 +28,6 @@ app.use(cors({
 }));
 app.use(express.json());
 
-// Montaje de Rutas de la API
 app.use('/api/courts', courtRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/reservations', reservationRoutes);
@@ -41,22 +39,25 @@ app.use('/api/owner-billing', ownerBillingRoutes);
 app.use('/api/media', mediaRoutes);
 app.use('/api/payment-account', paymentAccountRoutes);
 
-// Ruta Base
 app.get('/', (req, res) => {
-  res.send('API de Gestión Canchas funcionando correctamente');
+  res.send('API de Gestion Canchas funcionando correctamente');
 });
 
+<<<<<<< HEAD
 // Ruta Protegida de prueba
 app.get('/api/login', verifyAuth, (req, res) => {
+=======
+app.get('/api/secure/dashboard', verifyAuth, (req, res) => {
+>>>>>>> ea36f9c (cargando a github)
   res.json({
-    message: 'Esta información solo puede verla un usuario logueado',
-    user: req.user
+    message: 'Esta informacion solo puede verla un usuario logueado',
+    user: req.user,
   });
 });
 
 if (process.env.NODE_ENV !== 'production') {
   app.listen(PORT, () => {
-    console.log(`🚀 Servidor ejecutándose en el puerto ${PORT}`);
+    console.log(`Servidor ejecutandose en el puerto ${PORT}`);
   });
 }
 
