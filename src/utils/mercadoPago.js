@@ -6,6 +6,25 @@ function normalizeUrl(value, fallback) {
   return (value || fallback || '').replace(/\/$/, '');
 }
 
+function isPublicHttpUrl(value = '') {
+  const normalized = String(value || '').trim();
+  if (!normalized) return false;
+
+  try {
+    const parsed = new URL(normalized);
+    const hostname = String(parsed.hostname || '').toLowerCase();
+    const isLocalHost =
+      hostname === 'localhost' ||
+      hostname === '127.0.0.1' ||
+      hostname === '0.0.0.0' ||
+      hostname.endsWith('.local');
+
+    return ['http:', 'https:'].includes(parsed.protocol) && !isLocalHost;
+  } catch {
+    return false;
+  }
+}
+
 export function getFrontendUrl() {
   return normalizeUrl(process.env.FRONTEND_URL || process.env.APP_URL, 'http://localhost:5173');
 }
@@ -97,7 +116,12 @@ export function buildOrderPaymentPayload(formData = {}, additionalData = {}, fal
 }
 
 export function buildWebhookUrl(pathname) {
-  return `${getBackendUrl()}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
+  const backendUrl = getBackendUrl();
+  if (!isPublicHttpUrl(backendUrl)) {
+    return '';
+  }
+
+  return `${backendUrl}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
 }
 
 export async function createAutomaticMercadoPagoOrder({
@@ -127,7 +151,10 @@ export async function createAutomaticMercadoPagoOrder({
   };
 
   if (notificationPath) {
-    payload.notification_url = buildWebhookUrl(notificationPath);
+    const notificationUrl = buildWebhookUrl(notificationPath);
+    if (notificationUrl) {
+      payload.notification_url = notificationUrl;
+    }
   }
 
   return mercadopagoRequest(
