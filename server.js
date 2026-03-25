@@ -10,6 +10,7 @@ import complexRoutes from './src/routes/complexRoutes.js';
 import productRoutes from './src/routes/productRoutes.js';
 import orderRoutes from './src/routes/orderRoutes.js';
 import dashboardRoutes from './src/routes/dashboardRoutes.js';
+import ownerBillingRoutes from './src/routes/ownerBillingRoutes.js';
 
 dotenv.config();
 
@@ -36,6 +37,7 @@ app.use('/api/complexes', complexRoutes);
 app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/owner-billing', ownerBillingRoutes);
 
 // Ruta Base
 app.get('/', (req, res) => {
