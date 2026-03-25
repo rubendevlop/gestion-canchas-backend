@@ -168,7 +168,7 @@ export const confirmReservation = async (req, res) => {
 
 export const getComplexReservations = async (req, res) => {
   try {
-    const { complexId, date } = req.query;
+    const { complexId, date, status, paymentStatus, userId } = req.query;
     const filter = {};
 
     if (complexId) {
@@ -186,9 +186,22 @@ export const getComplexReservations = async (req, res) => {
       filter.date = new Date(date);
     }
 
+    if (status) {
+      filter.status = status;
+    }
+
+    if (paymentStatus) {
+      filter.paymentStatus = paymentStatus;
+    }
+
+    if (userId) {
+      filter.user = userId;
+    }
+
     const reservations = await Reservation.find(filter)
       .populate('court', 'name sport')
-      .populate('user', 'displayName email')
+      .populate('complexId', 'name')
+      .populate('user', 'displayName email photoURL createdAt')
       .sort({ date: 1, startTime: 1 });
 
     res.json(reservations);

@@ -1,4 +1,5 @@
 import Order from '../models/Order.js';
+import Complex from '../models/Complex.js';
 import Product from '../models/Product.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
@@ -68,8 +69,28 @@ export const getOrders = async (req, res) => {
 
     if (req.dbUser.role === 'client') {
       filter.userId = req.dbUser._id;
-    } else if (req.dbUser.role === 'owner' && req.query.complexId) {
+    } else if (req.dbUser.role === 'owner') {
+      const ownedComplexes = await Complex.find({ ownerId: req.dbUser._id }).select('_id');
+      const ownedComplexIds = ownedComplexes.map((complex) => complex._id.toString());
+
+      if (ownedComplexIds.length === 0) {
+        return res.json([]);
+      }
+
+      if (req.query.complexId) {
+        if (!ownedComplexIds.includes(String(req.query.complexId))) {
+          return res.status(403).json({ error: 'No autorizado para ver ordenes de ese complejo.' });
+        }
+        filter.complexId = req.query.complexId;
+      } else {
+        filter.complexId = { $in: ownedComplexIds };
+      }
+    } else if (req.query.complexId) {
       filter.complexId = req.query.complexId;
+    }
+
+    if (req.query.status) {
+      filter.status = req.query.status;
     }
 
     const orders = await Order.find(filter)

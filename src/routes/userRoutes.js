@@ -1,7 +1,7 @@
 import express from 'express';
 import {
   registerUser, loginUser, getCurrentUser,
-  listUsers, updateUserRole, approveOwner, rejectOwner
+  listUsers, updateUserRole, approveOwner, rejectOwner, getUserDirectory
 } from '../controllers/userController.js';
 import { verifyAuth, requireRole } from '../middlewares/authMiddleware.js';
 
@@ -12,6 +12,7 @@ router.post('/login',    verifyAuth, loginUser);
 router.get('/me',        verifyAuth, getCurrentUser);
 
 // Solo superadmin
+router.get('/directory',          verifyAuth, requireRole(['owner', 'superadmin']), getUserDirectory);
 router.get('/',                  verifyAuth, requireRole(['superadmin']), listUsers);
 router.patch('/:id/role',        verifyAuth, requireRole(['superadmin']), updateUserRole);
 router.patch('/:id/approve',     verifyAuth, requireRole(['superadmin']), approveOwner);
