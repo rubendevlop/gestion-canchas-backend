@@ -19,6 +19,7 @@ connectDB();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
+<<<<<<< HEAD
 // Configuración de Middlewares
 app.use(cors({
   origin: ['https://clubestucuman.ar',],
@@ -26,6 +27,35 @@ app.use(cors({
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
 }));
+=======
+const allowedOrigins = [
+  'https://clubestucuman.netlify.app',
+  String(process.env.FRONTEND_URL || '').replace(/\/$/, ''),
+].filter(Boolean);
+
+app.use(
+  cors({
+    origin: (origin, callback) => {
+      const normalizedOrigin = String(origin || '').replace(/\/$/, '');
+
+      if (
+        !origin ||
+        allowedOrigins.includes(normalizedOrigin) ||
+        /\.vercel\.app$/.test(normalizedOrigin) ||
+        /\.netlify\.app$/.test(normalizedOrigin)
+      ) {
+        callback(null, true);
+      } else {
+        callback(new Error('No permitido por CORS'));
+      }
+    },
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  }),
+);
+
+>>>>>>> 665e95b (cargando a github)
 app.use(express.json());
 
 app.use('/api/courts', courtRoutes);
