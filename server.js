@@ -43,12 +43,7 @@ app.get('/', (req, res) => {
   res.send('API de Gestion Canchas funcionando correctamente');
 });
 
-<<<<<<< HEAD
-// Ruta Protegida de prueba
-app.get('/api/login', verifyAuth, (req, res) => {
-=======
 app.get('/api/secure/dashboard', verifyAuth, (req, res) => {
->>>>>>> ea36f9c (cargando a github)
   res.json({
     message: 'Esta informacion solo puede verla un usuario logueado',
     user: req.user,
