@@ -4,6 +4,7 @@ import User from '../models/User.js';
 import {
   createAutomaticMercadoPagoOrder,
   extractMercadoPagoOrderId,
+  getMercadoPagoPublicKey,
   getMercadoPagoOrder,
   getMercadoPagoOrderSnapshot,
   isApprovedMercadoPagoOrder,
@@ -179,6 +180,7 @@ function getOwnerPaymentSession(invoice, owner, requestedPayerEmail = '') {
     checkoutMode: 'orders',
     amount: invoice.amount,
     currency: invoice.currency,
+    publicKey: getMercadoPagoPublicKey(),
     invoiceId: invoice._id,
     description: buildInvoiceDescription(owner),
     payer: {
