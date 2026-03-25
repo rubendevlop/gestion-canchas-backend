@@ -47,7 +47,7 @@ app.get('/', (req, res) => {
 });
 
 // Ruta Protegida de prueba
-app.get('/api/secure/dashboard', verifyAuth, (req, res) => {
+app.get('/api/login', verifyAuth, (req, res) => {
   res.json({
     message: 'Esta información solo puede verla un usuario logueado',
     user: req.user
