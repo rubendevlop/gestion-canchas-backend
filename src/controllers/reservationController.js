@@ -38,7 +38,7 @@ function buildReservationExternalReference(reservationId) {
 }
 
 function buildReservationDescription(reservation, court, complex) {
-  return `Reserva ${complex?.name || 'Gestion Pro'} - ${court?.name || 'Cancha'} - ${reservation.startTime}`;
+  return `Reserva ${complex?.name || 'Clubes Tucumán'} - ${court?.name || 'Cancha'} - ${reservation.startTime}`;
 }
 
 function serializeReservationPaymentSession(

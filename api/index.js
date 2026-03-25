@@ -65,7 +65,7 @@ app.use('/api/media', mediaRoutes);
 app.use('/api/payment-account', paymentAccountRoutes);
 
 app.get('/', (req, res) => {
-  res.send('API de Gestion Canchas funcionando correctamente');
+  res.send('API de Clubes Tucumán funcionando correctamente');
 });
 
 app.get('/api/secure/dashboard', verifyAuth, (req, res) => {

@@ -22,7 +22,7 @@ function buildExternalReference(orderId) {
 }
 
 function buildOrderDescription(order, complex) {
-  return `Pedido ecommerce ${complex?.name || 'Gestion Pro'} #${String(order._id).slice(-6).toUpperCase()}`;
+  return `Pedido tienda ${complex?.name || 'Clubes Tucumán'} #${String(order._id).slice(-6).toUpperCase()}`;
 }
 
 function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}) {

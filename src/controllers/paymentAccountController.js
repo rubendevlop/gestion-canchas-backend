@@ -1,9 +1,15 @@
 import Complex from '../models/Complex.js';
 import {
+  buildMercadoPagoOAuthConnectUrl,
+  buildMercadoPagoOAuthErrorRedirect,
+  buildMercadoPagoOAuthSuccessRedirect,
+  connectOwnerPaymentAccountWithOAuth,
+  disconnectOwnerPaymentAccount,
   getOwnerPaymentAccount,
   isPaymentAccountStorageReady,
+  isMercadoPagoOAuthReady,
   serializePaymentAccount,
-  upsertOwnerPaymentAccount,
+  updateOwnerPaymentAccountPreferences,
 } from '../utils/paymentAccounts.js';
 
 function serializeComplex(complex) {
@@ -25,6 +31,7 @@ export const getCurrentOwnerPaymentAccount = async (req, res) => {
       account: serializePaymentAccount(account),
       complexes: complexes.map(serializeComplex),
       secureStorageReady: isPaymentAccountStorageReady(),
+      oauthReady: isMercadoPagoOAuthReady(),
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -36,16 +43,67 @@ export const getCurrentOwnerPaymentAccount = async (req, res) => {
 
 export const updateCurrentOwnerPaymentAccount = async (req, res) => {
   try {
-    const account = await upsertOwnerPaymentAccount(req.dbUser._id, req.body);
+    const account = await updateOwnerPaymentAccountPreferences(req.dbUser._id, req.body);
 
     res.json({
-      message: 'Cuenta de Mercado Pago validada y guardada correctamente.',
+      message: 'Preferencias de cobro actualizadas correctamente.',
       account: serializePaymentAccount(account),
       secureStorageReady: isPaymentAccountStorageReady(),
+      oauthReady: isMercadoPagoOAuthReady(),
     });
   } catch (error) {
     res.status(error.status || 500).json({
       message: error.message || 'No se pudo guardar la cuenta de cobro.',
+      error: error.message,
+    });
+  }
+};
+
+export const getMercadoPagoConnectUrl = async (req, res) => {
+  try {
+    const data = await buildMercadoPagoOAuthConnectUrl(req.dbUser._id);
+    res.json(data);
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'No se pudo iniciar la conexion con Mercado Pago.',
+      error: error.message,
+    });
+  }
+};
+
+export const handleMercadoPagoOAuthCallback = async (req, res) => {
+  try {
+    const { code, state } = req.query;
+
+    if (!code || !state) {
+      throw new Error('Mercado Pago no devolvio el codigo de autorizacion.');
+    }
+
+    await connectOwnerPaymentAccountWithOAuth({
+      code,
+      state,
+    });
+
+    res.redirect(buildMercadoPagoOAuthSuccessRedirect());
+  } catch (error) {
+    const fallbackMessage = error.message || 'No se pudo vincular la cuenta de Mercado Pago.';
+    res.redirect(buildMercadoPagoOAuthErrorRedirect(fallbackMessage));
+  }
+};
+
+export const deleteCurrentOwnerPaymentAccount = async (req, res) => {
+  try {
+    const account = await disconnectOwnerPaymentAccount(req.dbUser._id);
+
+    res.json({
+      message: 'La cuenta de Mercado Pago fue desvinculada.',
+      account: serializePaymentAccount(account),
+      secureStorageReady: isPaymentAccountStorageReady(),
+      oauthReady: isMercadoPagoOAuthReady(),
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'No se pudo desvincular la cuenta de cobro.',
       error: error.message,
     });
   }

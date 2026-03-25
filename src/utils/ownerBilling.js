@@ -50,6 +50,10 @@ function getBillingMonths() {
 }
 
 function getConfiguredTestPayerEmail() {
+  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+    return '';
+  }
+
   return String(process.env.MERCADOPAGO_TEST_PAYER_EMAIL || '').trim();
 }
 
@@ -81,7 +85,7 @@ function buildExternalReference(ownerBillingId) {
 }
 
 function buildInvoiceDescription(owner) {
-  return `Acceso mensual Gestion Pro - ${owner.displayName || owner.email}`;
+  return `Acceso mensual Clubes Tucumán - ${owner.displayName || owner.email}`;
 }
 
 function getInvoiceBlockAt(invoice) {
