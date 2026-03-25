@@ -19,34 +19,29 @@ connectDB();
 const app = express();
 const PORT = process.env.PORT || 4000;
 
-<<<<<<< HEAD
 // Configuración de Middlewares
-app.use(cors({
-  origin: ['https://clubestucuman.ar',],
-  credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
-}));
-=======
 const allowedOrigins = [
-  'https://clubestucuman.netlify.app',
+  'https://clubestucuman.ar',
+  'https://www.clubestucuman.ar',
   String(process.env.FRONTEND_URL || '').replace(/\/$/, ''),
 ].filter(Boolean);
 
 app.use(
   cors({
     origin: (origin, callback) => {
-      const normalizedOrigin = String(origin || '').replace(/\/$/, '');
+      // Permitir requests sin origin (Postman, cURL, Netlify Functions)
+      if (!origin) return callback(null, true);
+
+      const normalized = String(origin).replace(/\/$/, '');
 
       if (
-        !origin ||
-        allowedOrigins.includes(normalizedOrigin) ||
-        /\.vercel\.app$/.test(normalizedOrigin) ||
-        /\.netlify\.app$/.test(normalizedOrigin)
+        allowedOrigins.includes(normalized) ||
+        /\.netlify\.app$/.test(normalized) ||
+        /^http:\/\/localhost(:\d+)?$/.test(normalized)
       ) {
         callback(null, true);
       } else {
-        callback(new Error('No permitido por CORS'));
+        callback(new Error(`CORS: origen no permitido → ${origin}`));
       }
     },
     credentials: true,
@@ -55,7 +50,6 @@ app.use(
   }),
 );
 
->>>>>>> 665e95b (cargando a github)
 app.use(express.json());
 
 app.use('/api/courts', courtRoutes);
