@@ -13,6 +13,7 @@ import {
   isPendingMercadoPagoOrder,
   validateMercadoPagoWebhookSignature,
 } from '../utils/mercadoPago.js';
+import { normalizeBookingHours } from '../utils/bookingHours.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
 async function ensureOwnerOwnsComplex(complexId, dbUser) {
@@ -154,6 +155,11 @@ export const createReservation = async (req, res) => {
 
     if (clash) {
       return res.status(409).json({ message: 'El horario ya esta reservado.' });
+    }
+
+    const availableBookingHours = normalizeBookingHours(court.bookingHours);
+    if (!availableBookingHours.includes(startTime)) {
+      return res.status(409).json({ message: 'Ese horario no esta habilitado para esta cancha.' });
     }
 
     const [hour, minute] = startTime.split(':').map(Number);

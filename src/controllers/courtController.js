@@ -1,5 +1,6 @@
 import Court from '../models/Court.js';
 import Complex from '../models/Complex.js';
+import { normalizeBookingHours } from '../utils/bookingHours.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 import { destroyCloudinaryAsset } from '../utils/cloudinary.js';
 
@@ -22,7 +23,12 @@ export const getCourts = async (req, res) => {
     }
 
     const courts = await Court.find(filter);
-    res.json(courts);
+    res.json(
+      courts.map((court) => ({
+        ...court.toObject(),
+        bookingHours: normalizeBookingHours(court.bookingHours),
+      })),
+    );
   } catch (error) {
     res.status(error.status || 500).json({ message: 'Error obteniendo las canchas', error: error.message });
   }
@@ -39,7 +45,10 @@ export const getCourtById = async (req, res) => {
         return res.status(404).json({ message: 'Cancha no disponible' });
       }
     }
-    res.json(court);
+    res.json({
+      ...court.toObject(),
+      bookingHours: normalizeBookingHours(court.bookingHours),
+    });
   } catch (error) {
     res.status(error.status || 500).json({ message: 'Error obteniendo la cancha', error: error.message });
   }
@@ -53,6 +62,7 @@ export const createCourt = async (req, res) => {
       sport,
       capacity,
       pricePerHour,
+      bookingHours,
       description,
       image,
       imagePublicId,
@@ -68,6 +78,7 @@ export const createCourt = async (req, res) => {
       sport,
       capacity,
       pricePerHour,
+      bookingHours: normalizeBookingHours(bookingHours),
       description,
       image: normalizedImage,
       imagePublicId: String(imagePublicId || '').trim(),
@@ -93,6 +104,7 @@ export const updateCourt = async (req, res) => {
       sport,
       capacity,
       pricePerHour,
+      bookingHours,
       description,
       isAvailable,
       image,
@@ -103,6 +115,7 @@ export const updateCourt = async (req, res) => {
     if (sport !== undefined) court.sport = sport;
     if (capacity !== undefined) court.capacity = capacity;
     if (pricePerHour !== undefined) court.pricePerHour = pricePerHour;
+    if (bookingHours !== undefined) court.bookingHours = normalizeBookingHours(bookingHours);
     if (description !== undefined) court.description = description;
     if (isAvailable !== undefined) court.isAvailable = isAvailable;
     if (image !== undefined) {
