@@ -1,5 +1,19 @@
 import User from '../models/User.js';
+import { getOwnerBillingState } from '../utils/ownerBilling.js';
 import { resolveDbUser } from '../utils/resolveDbUser.js';
+
+async function buildUserResponse(user, options = {}) {
+  const { createBillingIfMissing = true } = options;
+
+  if (!user) return null;
+
+  const payload = user.toObject ? user.toObject() : { ...user };
+  payload.ownerBilling = await getOwnerBillingState(user, {
+    createIfMissing: createBillingIfMissing,
+  });
+
+  return payload;
+}
 
 // POST /api/users/register
 export const registerUser = async (req, res) => {
@@ -22,7 +36,7 @@ export const registerUser = async (req, res) => {
     });
 
     await user.save();
-    res.status(201).json(user);
+    res.status(201).json(await buildUserResponse(user, { createBillingIfMissing: false }));
   } catch (error) {
     res.status(500).json({ message: 'Error registrando usuario', error: error.message });
   }
@@ -40,7 +54,7 @@ export const loginUser = async (req, res) => {
       });
     }
 
-    res.status(200).json(user);
+    res.status(200).json(await buildUserResponse(user));
   } catch (error) {
     res.status(500).json({ message: 'Error en el login', error: error.message });
   }
@@ -52,7 +66,7 @@ export const getCurrentUser = async (req, res) => {
     const user = await resolveDbUser(req.user);
     if (!user) return res.status(404).json({ message: 'Usuario no encontrado' });
 
-    res.json(user);
+    res.json(await buildUserResponse(user));
   } catch (error) {
     res.status(500).json({ message: 'Error obteniendo perfil', error: error.message });
   }
@@ -66,7 +80,10 @@ export const listUsers = async (req, res) => {
     if (req.query.ownerStatus) filter.ownerStatus = req.query.ownerStatus;
 
     const users = await User.find(filter).select('-__v').sort({ createdAt: -1 });
-    res.json(users);
+    const payload = await Promise.all(
+      users.map((user) => buildUserResponse(user, { createBillingIfMissing: false })),
+    );
+    res.json(payload);
   } catch (error) {
     res.status(500).json({ message: 'Error listando usuarios', error: error.message });
   }
@@ -94,7 +111,7 @@ export const updateUserRole = async (req, res) => {
     user.ownerStatusNote = '';
 
     await user.save();
-    res.json(user);
+    res.json(await buildUserResponse(user, { createBillingIfMissing: false }));
   } catch (error) {
     res.status(500).json({ message: 'Error actualizando rol', error: error.message });
   }
@@ -113,7 +130,7 @@ export const approveOwner = async (req, res) => {
     user.ownerStatusNote = req.body.note || '';
 
     await user.save();
-    res.json(user);
+    res.json(await buildUserResponse(user));
   } catch (error) {
     res.status(500).json({ message: 'Error aprobando owner', error: error.message });
   }
@@ -132,7 +149,7 @@ export const rejectOwner = async (req, res) => {
     user.ownerStatusNote = req.body.reason || '';
 
     await user.save();
-    res.json(user);
+    res.json(await buildUserResponse(user, { createBillingIfMissing: false }));
   } catch (error) {
     res.status(500).json({ message: 'Error rechazando owner', error: error.message });
   }

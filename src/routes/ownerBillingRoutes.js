@@ -5,12 +5,7 @@ import {
   getOwnerBillingInvoices,
   handleMercadoPagoWebhook,
 } from '../controllers/ownerBillingController.js';
-import {
-  attachDbUser,
-  requireOwnerBillingAccess,
-  requireRole,
-  verifyAuth,
-} from '../middlewares/authMiddleware.js';
+import { requireRole, verifyAuth } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
