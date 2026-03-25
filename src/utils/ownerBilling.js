@@ -49,6 +49,33 @@ function getBillingMonths() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BILLING_MONTHS;
 }
 
+function getConfiguredTestPayerEmail() {
+  return String(process.env.MERCADOPAGO_TEST_PAYER_EMAIL || '').trim();
+}
+
+function resolveOwnerBillingPayer(owner, requestedEmail = '') {
+  const configuredTestEmail = getConfiguredTestPayerEmail();
+  if (configuredTestEmail) {
+    return {
+      email: configuredTestEmail,
+      usesConfiguredTestEmail: true,
+    };
+  }
+
+  const normalizedRequestedEmail = String(requestedEmail || '').trim();
+  if (normalizedRequestedEmail) {
+    return {
+      email: normalizedRequestedEmail,
+      usesConfiguredTestEmail: false,
+    };
+  }
+
+  return {
+    email: owner.email,
+    usesConfiguredTestEmail: false,
+  };
+}
+
 function buildExternalReference(ownerBillingId) {
   return `owner-billing:${ownerBillingId}`;
 }
@@ -120,7 +147,9 @@ async function createPendingInvoice(owner, dueDate) {
   return invoice;
 }
 
-function getOwnerPaymentSession(invoice, owner) {
+function getOwnerPaymentSession(invoice, owner, requestedPayerEmail = '') {
+  const payer = resolveOwnerBillingPayer(owner, requestedPayerEmail);
+
   return {
     provider: 'mercadopago',
     checkoutMode: 'orders',
@@ -129,7 +158,8 @@ function getOwnerPaymentSession(invoice, owner) {
     invoiceId: invoice._id,
     description: buildInvoiceDescription(owner),
     payer: {
-      email: owner.email,
+      email: payer.email,
+      usesConfiguredTestEmail: payer.usesConfiguredTestEmail,
     },
   };
 }
@@ -307,9 +337,11 @@ export async function processOwnerBillingOrder(owner, invoiceId, formData, addit
     return {
       invoice: serializeInvoice(invoice),
       ownerBilling: await getOwnerBillingState(owner),
-      paymentSession: getOwnerPaymentSession(invoice, owner),
+      paymentSession: getOwnerPaymentSession(invoice, owner, formData?.payer?.email),
     };
   }
+
+  const payer = resolveOwnerBillingPayer(owner, formData?.payer?.email);
 
   const order = await createAutomaticMercadoPagoOrder({
     externalReference: invoice.externalReference,
@@ -317,7 +349,7 @@ export async function processOwnerBillingOrder(owner, invoiceId, formData, addit
     currency: invoice.currency,
     description: buildInvoiceDescription(owner),
     payer: {
-      email: formData?.payer?.email || owner.email,
+      email: payer.email,
       identification: formData?.payer?.identification || undefined,
     },
     formData,
@@ -330,7 +362,7 @@ export async function processOwnerBillingOrder(owner, invoiceId, formData, addit
   return {
     invoice: serializeInvoice(syncedInvoice),
     ownerBilling: await getOwnerBillingState(owner),
-    paymentSession: getOwnerPaymentSession(syncedInvoice, owner),
+    paymentSession: getOwnerPaymentSession(syncedInvoice, owner, payer.email),
   };
 }
 
