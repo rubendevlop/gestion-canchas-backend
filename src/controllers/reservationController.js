@@ -1,6 +1,18 @@
 import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Reservation from '../models/Reservation.js';
+import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
+import {
+  createAutomaticMercadoPagoOrder,
+  extractMercadoPagoOrderId,
+  getMercadoPagoOrder,
+  getMercadoPagoOrderSnapshot,
+  isApprovedMercadoPagoOrder,
+  isCancelledMercadoPagoOrder,
+  isFailedMercadoPagoOrder,
+  isPendingMercadoPagoOrder,
+  validateMercadoPagoWebhookSignature,
+} from '../utils/mercadoPago.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
 async function ensureOwnerOwnsComplex(complexId, dbUser) {
@@ -18,6 +30,98 @@ async function ensureOwnerOwnsComplex(complexId, dbUser) {
     error.status = 403;
     throw error;
   }
+}
+
+function buildReservationExternalReference(reservationId) {
+  return `reservation:${reservationId}`;
+}
+
+function buildReservationDescription(reservation, court, complex) {
+  return `Reserva ${complex?.name || 'Gestion Pro'} - ${court?.name || 'Cancha'} - ${reservation.startTime}`;
+}
+
+function serializeReservationPaymentSession(
+  reservation,
+  user,
+  court,
+  complex,
+  paymentProvider = {},
+) {
+  return {
+    provider: 'mercadopago',
+    checkoutMode: 'orders',
+    providerConfigured: paymentProvider.configured === true,
+    publicKey: paymentProvider.publicKey || '',
+    reservationId: reservation._id,
+    amount: reservation.totalPrice,
+    currency: 'ARS',
+    description: buildReservationDescription(reservation, court, complex),
+    payer: {
+      email: user.email,
+    },
+    providerAccount: paymentProvider.accountSummary
+      ? {
+          collectorNickname: paymentProvider.accountSummary.collectorNickname,
+          collectorEmail: paymentProvider.accountSummary.collectorEmail,
+          mode: paymentProvider.accountSummary.mode,
+        }
+      : null,
+  };
+}
+
+function applySnapshotToReservation(reservation, snapshot) {
+  reservation.mercadoPagoOrderId = snapshot.orderId;
+  reservation.mercadoPagoOrderStatus = snapshot.orderStatus;
+  reservation.mercadoPagoOrderStatusDetail = snapshot.orderStatusDetail;
+  reservation.mercadoPagoPaymentId = snapshot.paymentId;
+  reservation.mercadoPagoStatus = snapshot.paymentStatus;
+  reservation.mercadoPagoStatusDetail = snapshot.paymentStatusDetail;
+  reservation.mercadoPagoPaymentMethodId = snapshot.paymentMethodId;
+  reservation.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
+}
+
+async function syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder) {
+  const snapshot = getMercadoPagoOrderSnapshot(mercadoPagoOrder);
+  applySnapshotToReservation(reservation, snapshot);
+
+  if (isApprovedMercadoPagoOrder(mercadoPagoOrder)) {
+    reservation.paymentStatus = 'PAID';
+    reservation.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
+    if (reservation.status === 'PENDING') {
+      reservation.status = 'CONFIRMED';
+    }
+  } else if (isPendingMercadoPagoOrder(mercadoPagoOrder)) {
+    reservation.paymentStatus = 'UNPAID';
+  } else if (isCancelledMercadoPagoOrder(mercadoPagoOrder) || isFailedMercadoPagoOrder(mercadoPagoOrder)) {
+    reservation.paymentStatus = 'UNPAID';
+  }
+
+  await reservation.save();
+  return reservation;
+}
+
+async function loadReservationForPayment(reservationId, dbUser) {
+  const reservation = await Reservation.findById(reservationId)
+    .populate('court', 'name sport complexId')
+    .populate('complexId', 'name ownerId');
+
+  if (!reservation) {
+    const error = new Error('Reserva no encontrada.');
+    error.status = 404;
+    throw error;
+  }
+
+  if (dbUser.role === 'client' && reservation.user.toString() !== dbUser._id.toString()) {
+    const error = new Error('No autorizado para pagar esta reserva.');
+    error.status = 403;
+    throw error;
+  }
+
+  if (dbUser.role === 'owner') {
+    await ensureOwnerOwnsComplex(reservation.complexId?._id || reservation.complexId, dbUser);
+  }
+
+  return reservation;
 }
 
 export const createReservation = async (req, res) => {
@@ -64,10 +168,22 @@ export const createReservation = async (req, res) => {
       endTime,
       totalPrice: court.pricePerHour,
       status: 'PENDING',
+      externalReference: `reservation:draft:${user._id}:${Date.now()}`,
     });
 
+    reservation.externalReference = buildReservationExternalReference(reservation._id.toString());
+
     const saved = await reservation.save();
-    res.status(201).json(saved);
+    const complex = await Complex.findById(court.complexId).select('name ownerId');
+    const paymentProvider = complex?.ownerId
+      ? await getOwnerPaymentProvider(complex.ownerId)
+      : { configured: false, publicKey: '', accountSummary: null };
+
+    res.status(201).json({
+      reservation: saved,
+      providerConfigured: paymentProvider.configured === true,
+      paymentSession: serializeReservationPaymentSession(saved, user, court, complex, paymentProvider),
+    });
   } catch (error) {
     res.status(400).json({ message: 'Error creando la reserva', error: error.message });
   }
@@ -163,6 +279,103 @@ export const confirmReservation = async (req, res) => {
     res.json({ message: 'Reserva confirmada', reservation });
   } catch (error) {
     res.status(error.status || 500).json({ message: error.message || 'Error confirmando la reserva' });
+  }
+};
+
+export const processReservationPayment = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { formData, additionalData } = req.body;
+
+    if (!formData?.token) {
+      return res.status(400).json({ message: 'formData es requerido para procesar el pago.' });
+    }
+
+    const reservation = await loadReservationForPayment(id, req.dbUser);
+    await assertComplexClientAccess(reservation.complexId?._id || reservation.complexId, {
+      createBillingIfMissing: true,
+    });
+
+    const paymentProvider = await getOwnerPaymentProvider(reservation.complexId.ownerId);
+    if (!paymentProvider.configured || paymentProvider.accountSummary?.reservationsEnabled === false) {
+      return res.status(409).json({
+        message: 'El complejo todavia no tiene cobros online configurados para reservas.',
+      });
+    }
+
+    const mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
+      externalReference: reservation.externalReference,
+      totalAmount: reservation.totalPrice,
+      currency: 'ARS',
+      description: buildReservationDescription(reservation, reservation.court, reservation.complexId),
+      payer: {
+        email: formData?.payer?.email || req.dbUser.email,
+        identification: formData?.payer?.identification || undefined,
+      },
+      formData,
+      additionalData,
+      notificationPath: '/api/reservations/webhook/mercadopago',
+      accessToken: paymentProvider.accessToken,
+    });
+
+    const syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder);
+
+    res.json({
+      message: 'Pago de la reserva procesado correctamente.',
+      reservation: syncedReservation,
+      paymentSession: serializeReservationPaymentSession(
+        syncedReservation,
+        req.dbUser,
+        reservation.court,
+        reservation.complexId,
+        paymentProvider,
+      ),
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'Error procesando el pago de la reserva.',
+      error: error.message,
+    });
+  }
+};
+
+export const handleMercadoPagoReservationWebhook = async (req, res) => {
+  try {
+    if (!validateMercadoPagoWebhookSignature(req)) {
+      return res.status(401).json({ received: false, error: 'Firma de webhook invalida.' });
+    }
+
+    const orderId = extractMercadoPagoOrderId({
+      ...req.body,
+      query: req.query,
+    });
+
+    if (!orderId) {
+      return res.status(200).json({ received: true, ignored: true });
+    }
+
+    const reservation = await Reservation.findOne({ mercadoPagoOrderId: String(orderId) })
+      .populate('complexId', 'ownerId')
+      .populate('court', 'name');
+
+    if (!reservation) {
+      return res.status(200).json({ received: true, ignored: true, reason: 'reservation_not_found' });
+    }
+
+    const paymentProvider = await getOwnerPaymentProvider(reservation.complexId?.ownerId);
+    if (!paymentProvider.configured) {
+      return res.status(200).json({ received: true, ignored: true, reason: 'payment_account_not_configured' });
+    }
+
+    const mercadoPagoOrder = await getMercadoPagoOrder(orderId, paymentProvider.accessToken);
+    const syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder);
+
+    res.status(200).json({ received: true, reservation: syncedReservation });
+  } catch (error) {
+    res.status(200).json({
+      received: true,
+      error: error.message,
+    });
   }
 };
 

@@ -37,8 +37,8 @@ export function getMercadoPagoPublicKey() {
   return String(process.env.MERCADOPAGO_PUBLIC_KEY || '').trim();
 }
 
-export function getMercadoPagoAccessToken() {
-  return String(process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
+export function getMercadoPagoAccessToken(overrideToken = '') {
+  return String(overrideToken || process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
 }
 
 export function isMercadoPagoConfigured() {
@@ -46,7 +46,7 @@ export function isMercadoPagoConfigured() {
 }
 
 export async function mercadopagoRequest(path, options = {}, requestOptions = {}) {
-  const accessToken = getMercadoPagoAccessToken();
+  const accessToken = getMercadoPagoAccessToken(requestOptions.accessToken);
   if (!accessToken) {
     throw new Error('Mercado Pago no esta configurado.');
   }
@@ -69,7 +69,12 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    throw new Error(data.message || data.error || data.cause?.[0]?.description || 'Mercado Pago rechazo la operacion.');
+    const error = new Error(
+      data.message || data.error || data.cause?.[0]?.description || 'Mercado Pago rechazo la operacion.',
+    );
+    error.status = response.status;
+    error.payload = data;
+    throw error;
   }
 
   return data;
@@ -133,6 +138,7 @@ export async function createAutomaticMercadoPagoOrder({
   formData = {},
   additionalData = {},
   notificationPath,
+  accessToken = '',
 }) {
   const payload = {
     type: 'online',
@@ -165,12 +171,13 @@ export async function createAutomaticMercadoPagoOrder({
     },
     {
       idempotencyKey: `${externalReference}:${String(formData.token || '').slice(-16)}`,
+      accessToken,
     },
   );
 }
 
-export async function getMercadoPagoOrder(orderId) {
-  return mercadopagoRequest(`/v1/orders/${orderId}`);
+export async function getMercadoPagoOrder(orderId, accessToken = '') {
+  return mercadopagoRequest(`/v1/orders/${orderId}`, {}, { accessToken });
 }
 
 export function getPrimaryOrderPayment(order = {}) {

@@ -12,6 +12,7 @@ import orderRoutes from '../src/routes/orderRoutes.js';
 import dashboardRoutes from '../src/routes/dashboardRoutes.js';
 import ownerBillingRoutes from '../src/routes/ownerBillingRoutes.js';
 import mediaRoutes from '../src/routes/mediaRoutes.js';
+import paymentAccountRoutes from '../src/routes/paymentAccountRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -52,6 +53,7 @@ app.use('/api/orders', orderRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/owner-billing', ownerBillingRoutes);
 app.use('/api/media', mediaRoutes);
+app.use('/api/payment-account', paymentAccountRoutes);
 
 // Ruta Base
 app.get('/', (req, res) => {
