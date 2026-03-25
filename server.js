@@ -22,7 +22,7 @@ const PORT = process.env.PORT || 4000;
 
 // Configuración de Middlewares
 app.use(cors({
-  origin: ['http://localhost:5173'],
+  origin: ['https://clubestucuman.ar',],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization']
