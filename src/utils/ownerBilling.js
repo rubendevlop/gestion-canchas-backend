@@ -137,6 +137,26 @@ async function getActivePaidInvoice(ownerId, now) {
   }).sort({ accessEndsAt: -1 });
 }
 
+/**
+ * Si una factura fue puesta en PAID manualmente en la DB (sin pasar por el
+ * flujo de MercadoPago), accessEndsAt queda null y el sistema la ignora
+ * creando una nueva pendiente. Esta función la repara calculando las fechas
+ * desde paidAt/updatedAt/createdAt.
+ */
+async function repairMissingAccessDates(invoice) {
+  if (!invoice || invoice.status !== 'PAID' || invoice.accessEndsAt) return invoice;
+
+  const base = invoice.paidAt || invoice.updatedAt || invoice.createdAt;
+  const accessStart = invoice.accessStartsAt || new Date(base);
+  const accessEnd = addMonths(accessStart, getBillingMonths());
+
+  invoice.paidAt = invoice.paidAt || new Date(base);
+  invoice.accessStartsAt = accessStart;
+  invoice.accessEndsAt = accessEnd;
+  await invoice.save();
+  return invoice;
+}
+
 async function createPendingInvoice(owner, dueDate) {
   const invoice = new OwnerBilling({
     ownerId: owner._id,
@@ -260,8 +280,16 @@ export async function getOwnerBillingState(owner, options = {}) {
   }
 
   const now = new Date();
+
+  // Reparar facturas PAID sin accessEndsAt antes de evaluar el estado activo.
+  // Esto ocurre cuando un admin las marca manualmente en la DB.
+  const rawLatestPaid = await getLatestPaidInvoice(owner._id);
+  if (rawLatestPaid && !rawLatestPaid.accessEndsAt) {
+    await repairMissingAccessDates(rawLatestPaid);
+  }
+
   const activePaidInvoice = await getActivePaidInvoice(owner._id, now);
-  const latestPaidInvoice = activePaidInvoice || (await getLatestPaidInvoice(owner._id));
+  const latestPaidInvoice = activePaidInvoice || rawLatestPaid;
 
   if (activePaidInvoice) {
     return {
