@@ -180,10 +180,17 @@ export const createReservation = async (req, res) => {
     reservation.externalReference = buildReservationExternalReference(reservation._id.toString());
 
     const saved = await reservation.save();
-    const complex = await Complex.findById(court.complexId).select('name ownerId');
-    const paymentProvider = complex?.ownerId
-      ? await getOwnerPaymentProvider(complex.ownerId)
-      : { configured: false, publicKey: '', accountSummary: null };
+    let complex = null;
+    let paymentProvider = { configured: false, publicKey: '', accountSummary: null };
+
+    try {
+      complex = await Complex.findById(court.complexId).select('name ownerId');
+      paymentProvider = complex?.ownerId
+        ? await getOwnerPaymentProvider(complex.ownerId)
+        : paymentProvider;
+    } catch (paymentSetupError) {
+      console.error('No se pudo resolver la cuenta de cobro al crear la reserva:', paymentSetupError.message);
+    }
 
     res.status(201).json({
       reservation: saved,
@@ -191,7 +198,10 @@ export const createReservation = async (req, res) => {
       paymentSession: serializeReservationPaymentSession(saved, user, court, complex, paymentProvider),
     });
   } catch (error) {
-    res.status(400).json({ message: 'Error creando la reserva', error: error.message });
+    res.status(error.status || 500).json({
+      message: error.message || 'Error creando la reserva',
+      error: error.message,
+    });
   }
 };
 
