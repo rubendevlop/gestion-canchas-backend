@@ -5,6 +5,7 @@ import {
   getCurrentOwnerBilling,
   getOwnerBillingInvoices,
   handleMercadoPagoWebhook,
+  processOwnerBillingCheckout,
 } from '../controllers/ownerBillingController.js';
 import { requireRole, verifyAuth } from '../middlewares/authMiddleware.js';
 
@@ -16,6 +17,7 @@ router.get('/webhook/mercadopago', handleMercadoPagoWebhook);
 router.get('/admin/invoices', verifyAuth, requireRole(['superadmin']), getAdminOwnerBillingInvoices);
 router.get('/current', verifyAuth, requireRole(['owner']), getCurrentOwnerBilling);
 router.post('/checkout', verifyAuth, requireRole(['owner']), createOwnerBillingCheckout);
+router.post('/checkout/process-order', verifyAuth, requireRole(['owner']), processOwnerBillingCheckout);
 router.get('/history', verifyAuth, requireRole(['owner']), getOwnerBillingInvoices);
 
 export default router;

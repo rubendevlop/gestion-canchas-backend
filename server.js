@@ -11,6 +11,7 @@ import productRoutes from './src/routes/productRoutes.js';
 import orderRoutes from './src/routes/orderRoutes.js';
 import dashboardRoutes from './src/routes/dashboardRoutes.js';
 import ownerBillingRoutes from './src/routes/ownerBillingRoutes.js';
+import mediaRoutes from './src/routes/mediaRoutes.js';
 
 // Inicializar BD
 connectDB();
@@ -36,6 +37,7 @@ app.use('/api/products', productRoutes);
 app.use('/api/orders', orderRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/owner-billing', ownerBillingRoutes);
+app.use('/api/media', mediaRoutes);
 
 // Ruta Base
 app.get('/', (req, res) => {

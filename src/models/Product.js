@@ -7,7 +7,16 @@ const productSchema = new mongoose.Schema({
   stock: { type: Number, default: 0 },
   category: { type: String, required: true }, // ej: Bebidas, Snacks, Indumentaria, Equipamiento
   image: { type: String },
+  imagePublicId: { type: String, default: '' },
   complexId: { type: mongoose.Schema.Types.ObjectId, ref: 'Complex', required: true }
-}, { timestamps: true });
+}, {
+  timestamps: true,
+  toJSON: { virtuals: true },
+  toObject: { virtuals: true },
+});
+
+productSchema.virtual('imageUrl').get(function imageUrl() {
+  return this.image || '';
+});
 
 export default mongoose.model('Product', productSchema);

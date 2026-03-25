@@ -3,10 +3,12 @@ import {
   extractMercadoPagoPaymentId,
   getOwnerBillingHistory,
   getOwnerBillingState,
+  processOwnerBillingOrder,
   syncOwnerBillingPayment,
 } from '../utils/ownerBilling.js';
 import Complex from '../models/Complex.js';
 import OwnerBilling from '../models/OwnerBilling.js';
+import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 
 function serializeAdminInvoice(invoice, complexes = []) {
   return {
@@ -28,7 +30,8 @@ function serializeAdminInvoice(invoice, complexes = []) {
     paidAt: invoice.paidAt,
     accessStartsAt: invoice.accessStartsAt,
     accessEndsAt: invoice.accessEndsAt,
-    checkoutUrl: invoice.checkoutUrl || invoice.checkoutSandboxUrl || '',
+    mercadoPagoOrderId: invoice.mercadoPagoOrderId || '',
+    mercadoPagoOrderStatus: invoice.mercadoPagoOrderStatus || '',
     paymentId: invoice.mercadoPagoPaymentId || '',
     paymentStatus: invoice.mercadoPagoStatus || '',
     externalReference: invoice.externalReference,
@@ -48,16 +51,42 @@ export const getCurrentOwnerBilling = async (req, res) => {
 
 export const createOwnerBillingCheckout = async (req, res) => {
   try {
-    const invoice = await createOrReuseOwnerCheckout(req.dbUser);
+    const { invoice, paymentSession } = await createOrReuseOwnerCheckout(req.dbUser);
     const ownerBilling = await getOwnerBillingState(req.dbUser);
 
     res.json({
-      message: 'Checkout generado correctamente.',
-      checkoutUrl: invoice.checkoutUrl || invoice.checkoutSandboxUrl || '',
+      message: 'Sesion de pago preparada correctamente.',
+      invoice: {
+        id: invoice._id,
+        amount: invoice.amount,
+        currency: invoice.currency,
+        dueDate: invoice.dueDate,
+        status: invoice.status,
+      },
+      paymentSession,
       ownerBilling,
     });
   } catch (error) {
-    res.status(500).json({ message: 'Error generando el checkout', error: error.message });
+    res.status(500).json({ message: 'Error preparando el pago', error: error.message });
+  }
+};
+
+export const processOwnerBillingCheckout = async (req, res) => {
+  try {
+    const { invoiceId, formData, additionalData } = req.body;
+
+    if (!invoiceId || !formData?.token) {
+      return res.status(400).json({ message: 'invoiceId y formData son requeridos.' });
+    }
+
+    const result = await processOwnerBillingOrder(req.dbUser, invoiceId, formData, additionalData);
+
+    res.json({
+      message: 'Pago procesado correctamente.',
+      ...result,
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({ message: error.message || 'Error procesando el pago', error: error.message });
   }
 };
 
@@ -152,6 +181,10 @@ export const getAdminOwnerBillingInvoices = async (req, res) => {
 
 export const handleMercadoPagoWebhook = async (req, res) => {
   try {
+    if (!validateMercadoPagoWebhookSignature(req)) {
+      return res.status(401).json({ received: false, error: 'Firma de webhook invalida.' });
+    }
+
     const paymentId = extractMercadoPagoPaymentId({
       ...req.body,
       query: req.query,

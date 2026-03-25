@@ -1,6 +1,7 @@
 import Court from '../models/Court.js';
 import Complex from '../models/Complex.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
+import { destroyCloudinaryAsset } from '../utils/cloudinary.js';
 
 const assertOwner = (complex, dbUser) => {
   if (dbUser.role === 'superadmin') return;
@@ -47,12 +48,32 @@ export const getCourtById = async (req, res) => {
 // POST /api/courts
 export const createCourt = async (req, res) => {
   try {
-    const { name, sport, capacity, pricePerHour, description, complexId } = req.body;
+    const {
+      name,
+      sport,
+      capacity,
+      pricePerHour,
+      description,
+      image,
+      imagePublicId,
+      complexId,
+    } = req.body;
     const complex = await Complex.findById(complexId);
     if (!complex) return res.status(404).json({ message: 'Complejo no encontrado' });
     assertOwner(complex, req.dbUser);
 
-    const court = new Court({ name, sport, capacity, pricePerHour, description, complexId });
+    const normalizedImage = String(image || '').trim();
+    const court = new Court({
+      name,
+      sport,
+      capacity,
+      pricePerHour,
+      description,
+      image: normalizedImage,
+      imagePublicId: String(imagePublicId || '').trim(),
+      images: normalizedImage ? [normalizedImage] : [],
+      complexId,
+    });
     await court.save();
     res.status(201).json(court);
   } catch (error) {
@@ -67,15 +88,41 @@ export const updateCourt = async (req, res) => {
     if (!court) return res.status(404).json({ message: 'Cancha no encontrada' });
     assertOwner(court.complexId, req.dbUser);
 
-    const { name, sport, capacity, pricePerHour, description, isAvailable } = req.body;
+    const {
+      name,
+      sport,
+      capacity,
+      pricePerHour,
+      description,
+      isAvailable,
+      image,
+      imagePublicId,
+    } = req.body;
+    const previousImagePublicId = court.imagePublicId || '';
     if (name !== undefined) court.name = name;
     if (sport !== undefined) court.sport = sport;
     if (capacity !== undefined) court.capacity = capacity;
     if (pricePerHour !== undefined) court.pricePerHour = pricePerHour;
     if (description !== undefined) court.description = description;
     if (isAvailable !== undefined) court.isAvailable = isAvailable;
+    if (image !== undefined) {
+      court.image = String(image || '').trim();
+      court.images = court.image ? [court.image] : [];
+    }
+    if (imagePublicId !== undefined) {
+      court.imagePublicId = String(imagePublicId || '').trim();
+    }
 
     await court.save();
+
+    if (
+      previousImagePublicId &&
+      imagePublicId !== undefined &&
+      previousImagePublicId !== court.imagePublicId
+    ) {
+      await destroyCloudinaryAsset(previousImagePublicId);
+    }
+
     res.json(court);
   } catch (error) {
     res.status(error.status || 400).json({ message: error.message || 'Error actualizando la cancha' });
@@ -88,7 +135,9 @@ export const deleteCourt = async (req, res) => {
     const court = await Court.findById(req.params.id).populate('complexId');
     if (!court) return res.status(404).json({ message: 'Cancha no encontrada' });
     assertOwner(court.complexId, req.dbUser);
+    const imagePublicId = court.imagePublicId || '';
     await court.deleteOne();
+    await destroyCloudinaryAsset(imagePublicId);
     res.json({ message: 'Cancha eliminada correctamente' });
   } catch (error) {
     res.status(error.status || 500).json({ message: error.message || 'Error eliminando la cancha' });

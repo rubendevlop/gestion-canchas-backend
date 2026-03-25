@@ -1,6 +1,7 @@
 import Product from '../models/Product.js';
 import Complex from '../models/Complex.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
+import { destroyCloudinaryAsset } from '../utils/cloudinary.js';
 
 const assertOwner = (complex, dbUser) => {
   if (dbUser.role === 'superadmin') return;
@@ -12,11 +13,29 @@ const assertOwner = (complex, dbUser) => {
 // POST /api/products
 export const createProduct = async (req, res) => {
   try {
-    const { name, description, price, stock, category, image, complexId } = req.body;
+    const {
+      name,
+      description,
+      price,
+      stock,
+      category,
+      image,
+      imagePublicId,
+      complexId,
+    } = req.body;
     const complex = await Complex.findById(complexId);
     if (!complex) return res.status(404).json({ error: 'Complejo no encontrado' });
     assertOwner(complex, req.dbUser);
-    const prod = new Product({ name, description, price, stock, category, image, complexId });
+    const prod = new Product({
+      name,
+      description,
+      price,
+      stock,
+      category,
+      image: String(image || '').trim(),
+      imagePublicId: String(imagePublicId || '').trim(),
+      complexId,
+    });
     await prod.save();
     res.status(201).json(prod);
   } catch (error) {
@@ -48,14 +67,25 @@ export const updateProduct = async (req, res) => {
     const prod = await Product.findById(req.params.id).populate('complexId');
     if (!prod) return res.status(404).json({ error: 'Producto no encontrado' });
     assertOwner(prod.complexId, req.dbUser);
-    const { name, description, price, stock, category, image } = req.body;
+    const { name, description, price, stock, category, image, imagePublicId } = req.body;
+    const previousImagePublicId = prod.imagePublicId || '';
     if (name        !== undefined) prod.name        = name;
     if (description !== undefined) prod.description = description;
     if (price       !== undefined) prod.price       = price;
     if (stock       !== undefined) prod.stock       = stock;
     if (category    !== undefined) prod.category    = category;
-    if (image       !== undefined) prod.image       = image;
+    if (image       !== undefined) prod.image       = String(image || '').trim();
+    if (imagePublicId !== undefined) prod.imagePublicId = String(imagePublicId || '').trim();
     await prod.save();
+
+    if (
+      previousImagePublicId &&
+      imagePublicId !== undefined &&
+      previousImagePublicId !== prod.imagePublicId
+    ) {
+      await destroyCloudinaryAsset(previousImagePublicId);
+    }
+
     res.json(prod);
   } catch (error) {
     res.status(error.status || 400).json({ error: error.message || 'Error al actualizar producto' });
@@ -68,7 +98,9 @@ export const deleteProduct = async (req, res) => {
     const prod = await Product.findById(req.params.id).populate('complexId');
     if (!prod) return res.status(404).json({ error: 'Producto no encontrado' });
     assertOwner(prod.complexId, req.dbUser);
+    const imagePublicId = prod.imagePublicId || '';
     await prod.deleteOne();
+    await destroyCloudinaryAsset(imagePublicId);
     res.json({ message: 'Producto eliminado correctamente' });
   } catch (error) {
     res.status(error.status || 500).json({ error: error.message || 'Error al eliminar producto' });
