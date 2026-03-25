@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import dotenv from 'dotenv';
+import './src/config/loadEnv.js';
 import connectDB from './src/config/db.js';
 import { verifyAuth } from './src/middlewares/authMiddleware.js';
 import courtRoutes from './src/routes/courtRoutes.js';
@@ -11,8 +11,6 @@ import productRoutes from './src/routes/productRoutes.js';
 import orderRoutes from './src/routes/orderRoutes.js';
 import dashboardRoutes from './src/routes/dashboardRoutes.js';
 import ownerBillingRoutes from './src/routes/ownerBillingRoutes.js';
-
-dotenv.config();
 
 // Inicializar BD
 connectDB();
