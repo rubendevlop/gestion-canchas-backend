@@ -1,79 +1,195 @@
-import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate } from 'react-router-dom';
-import { onAuthStateChanged } from 'firebase/auth';
-import { auth } from './firebase';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
+import ProtectedRoute from './components/ProtectedRoute';
 
 import Login from './pages/Login';
-import Dashboard from './pages/Dashboard';
+
+// Admin Panel (owner + superadmin)
 import DashboardLayout from './layouts/DashboardLayout';
+import DashboardHome from './pages/DashboardHome';
 import Inventory from './pages/Inventory';
 import Courts from './pages/Courts';
 import Reservations from './pages/Reservations';
-import { fetchAPI } from './services/api';
+import OwnerBilling from './pages/OwnerBilling';
+import OwnerCollections from './pages/OwnerCollections';
+import OwnerCustomers from './pages/OwnerCustomers';
+import AdminUsers from './pages/AdminUsers';
+import AdminComplexes from './pages/AdminComplexes';
+import AdminPayments from './pages/AdminPayments';
+import Settings from './pages/Settings';
 
-function App() {
-  const [user, setUser] = useState(null);
-  const [role, setRole] = useState(null); // 'user', 'owner' (admin), 'superadmin'
-  const [loading, setLoading] = useState(true);
+// Portal Cliente (client) – multi-tenant
+import PortalLayout from './layouts/PortalLayout';
+import PortalHome from './pages/portal/PortalHome';
+import ComplexDetail from './pages/portal/ComplexDetail';
+import BookCourt from './pages/portal/BookCourt';
+import ComplexStore from './pages/portal/ComplexStore';
+import Cart from './pages/portal/Cart';
+import MyReservations from './pages/portal/MyReservations';
+import PortalProfile from './pages/portal/PortalProfile';
 
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
-      
-      if (currentUser) {
-         try {
-           const intent = localStorage.getItem('auth_intent');
-
-           if (intent === 'register') {
-             // Registra intencionalmente al usuario
-             const res = await fetchAPI('/users/register', { method: 'POST' });
-             setRole(res.role);
-             localStorage.removeItem('auth_intent');
-           } else {
-             // Intenta iniciar sesión. Falla si no fue creado primero
-             const res = await fetchAPI('/users/login', { method: 'POST' });
-             setRole(res.role);
-           }
-           
-           setUser(currentUser); // Solo seteamos el usuario si el backend lo aprobó
-         } catch (error) {
-           console.error("Error autenticando con BD:", error);
-           await auth.signOut(); // Revocar sesión de Firebase inmediatamente
-           setUser(null);
-           setRole(null);
-           alert(error.message || "Acceso denegado. Asegúrate de registrarte primero.");
-         }
-      } else {
-        setUser(null);
-        setRole(null);
-      }
-      setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-background text-primary">Cargando Plataforma...</div>;
+function LoginGuard({ children }) {
+  const { user, role, loading } = useAuth();
+  if (loading) return null;
+  if (user && role) {
+    if (role === 'client') return <Navigate to="/portal" replace />;
+    return <Navigate to="/dashboard" replace />;
   }
+  return children;
+}
 
+function RoleRedirect() {
+  const { user, role, loading } = useAuth();
+  if (loading) return <div className="min-h-screen flex items-center justify-center bg-background text-primary">Cargando...</div>;
+  if (!user || !role) return <Navigate to="/login" replace />;
+  if (role === 'client') return <Navigate to="/portal" replace />;
+  return <Navigate to="/dashboard" replace />;
+}
+
+function AppRoutes() {
   return (
-    <Router>
-      <Routes>
-        <Route path="/login" element={!user ? <Login /> : <Navigate to="/dashboard" />} />
-        
-        {/* Rutas Privadas Workspace SaaS (Administradores/Dueños de Complejo) */}
-        <Route path="/dashboard" element={user ? <DashboardLayout user={user} /> : <Navigate to="/login" />}>
-          <Route index element={<Dashboard />} />
-          <Route path="products" element={<Inventory />} />
-          <Route path="courts" element={<Courts />} />
-          <Route path="reservations" element={<Reservations />} />
-          <Route path="settings" element={<div className="p-10"><h2 className="text-2xl font-display font-medium text-on_surface">Ajustes</h2></div>} />
-        </Route>
+    <Routes>
+      {/* Login – si ya está logueado redirige */}
+      <Route
+        path="/login"
+        element={
+          <LoginGuard>
+            <Login />
+          </LoginGuard>
+        }
+      />
 
-        {/* Home Redirect (Temporal) */}
-        <Route path="/" element={<Navigate to={user ? "/dashboard" : "/login"} />} />
-      </Routes>
-    </Router>
+      {/* Raíz → redirige según rol */}
+      <Route path="/" element={<RoleRedirect />} />
+
+      {/* ─── PANEL ADMIN (owner / superadmin) ─── */}
+      <Route
+        path="/dashboard"
+        element={
+          <ProtectedRoute allowedRoles={['owner', 'superadmin']}>
+            <DashboardLayout />
+          </ProtectedRoute>
+        }
+      >
+        <Route index element={<DashboardHome />} />
+        <Route
+          path="courts"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <Courts />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="reservations"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <Reservations />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="products"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <Inventory />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="collections"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <OwnerCollections />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="billing"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <OwnerBilling />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="customers"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <OwnerCustomers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="settings"
+          element={
+            <ProtectedRoute allowedRoles={['owner']}>
+              <Settings />
+            </ProtectedRoute>
+          }
+        />
+        {/* Solo superadmin */}
+        <Route
+          path="users"
+          element={
+            <ProtectedRoute allowedRoles={['superadmin']}>
+              <AdminUsers />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="complexes"
+          element={
+            <ProtectedRoute allowedRoles={['superadmin']}>
+              <AdminComplexes />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="payments"
+          element={
+            <ProtectedRoute allowedRoles={['superadmin']}>
+              <AdminPayments />
+            </ProtectedRoute>
+          }
+        />
+      </Route>
+
+      {/* ─── PORTAL CLIENTE (multi-tenant) ─── */}
+      <Route
+        path="/portal"
+        element={
+          <ProtectedRoute allowedRoles={['client']}>
+            <PortalLayout />
+          </ProtectedRoute>
+        }
+      >
+        {/* Home: listado de todos los complejos */}
+        <Route index element={<PortalHome />} />
+
+        {/* Contexto de un complejo específico */}
+        <Route path="complejo/:complexId" element={<ComplexDetail />} />
+        <Route path="complejo/:complexId/reservar" element={<BookCourt />} />
+        <Route path="complejo/:complexId/tienda" element={<ComplexStore />} />
+        <Route path="complejo/:complexId/tienda/carrito" element={<Cart />} />
+
+        {/* Área personal del cliente */}
+        <Route path="mis-reservas" element={<MyReservations />} />
+        <Route path="perfil" element={<PortalProfile />} />
+      </Route>
+
+      {/* Catch-all */}
+      <Route path="*" element={<RoleRedirect />} />
+    </Routes>
   );
 }
 
-export default App;
+export default function App() {
+  return (
+    <AuthProvider>
+      <Router>
+        <AppRoutes />
+      </Router>
+    </AuthProvider>
+  );
+}
