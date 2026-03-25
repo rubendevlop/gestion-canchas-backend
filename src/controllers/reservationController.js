@@ -33,6 +33,10 @@ export const createReservation = async (req, res) => {
       return res.status(404).json({ message: 'Cancha no encontrada' });
     }
 
+    if (user.role === 'owner') {
+      await ensureOwnerOwnsComplex(court.complexId, user);
+    }
+
     const dateObj = new Date(date);
     const clash = await Reservation.findOne({
       court: courtId,
@@ -159,6 +163,12 @@ export const getComplexReservations = async (req, res) => {
     if (complexId) {
       await ensureOwnerOwnsComplex(complexId, req.dbUser);
       filter.complexId = complexId;
+    } else if (req.dbUser.role === 'owner') {
+      const ownedComplex = await Complex.findOne({ ownerId: req.dbUser._id }).select('_id');
+      if (!ownedComplex) {
+        return res.status(404).json({ message: 'No tenes ningun complejo configurado.' });
+      }
+      filter.complexId = ownedComplex._id;
     }
 
     if (date) {
