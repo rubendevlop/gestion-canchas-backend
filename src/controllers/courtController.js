@@ -1,5 +1,6 @@
 import Court from '../models/Court.js';
 import Complex from '../models/Complex.js';
+import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
 const assertOwner = (complex, dbUser) => {
   if (dbUser.role === 'superadmin') return;
@@ -13,10 +14,16 @@ export const getCourts = async (req, res) => {
   try {
     const filter = {};
     if (req.query.complexId) filter.complexId = req.query.complexId;
+
+     if (req.query.clientVisible === 'true' && req.query.complexId) {
+      await assertComplexClientAccess(req.query.complexId, { createBillingIfMissing: true });
+      filter.isAvailable = true;
+    }
+
     const courts = await Court.find(filter);
     res.json(courts);
   } catch (error) {
-    res.status(500).json({ message: 'Error obteniendo las canchas', error: error.message });
+    res.status(error.status || 500).json({ message: 'Error obteniendo las canchas', error: error.message });
   }
 };
 
@@ -25,9 +32,15 @@ export const getCourtById = async (req, res) => {
   try {
     const court = await Court.findById(req.params.id);
     if (!court) return res.status(404).json({ message: 'Cancha no encontrada' });
+    if (req.query.clientVisible === 'true') {
+      await assertComplexClientAccess(court.complexId, { createBillingIfMissing: true });
+      if (!court.isAvailable) {
+        return res.status(404).json({ message: 'Cancha no disponible' });
+      }
+    }
     res.json(court);
   } catch (error) {
-    res.status(500).json({ message: 'Error obteniendo la cancha', error: error.message });
+    res.status(error.status || 500).json({ message: 'Error obteniendo la cancha', error: error.message });
   }
 };
 

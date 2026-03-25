@@ -1,5 +1,6 @@
 import Product from '../models/Product.js';
 import Complex from '../models/Complex.js';
+import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
 const assertOwner = (complex, dbUser) => {
   if (dbUser.role === 'superadmin') return;
@@ -29,10 +30,15 @@ export const getProducts = async (req, res) => {
     const filter = {};
     if (req.query.complexId) filter.complexId = req.query.complexId;
     if (req.query.category)  filter.category  = req.query.category;
+
+    if (req.query.clientVisible === 'true' && req.query.complexId) {
+      await assertComplexClientAccess(req.query.complexId, { createBillingIfMissing: true });
+    }
+
     const products = await Product.find(filter);
     res.json(products);
   } catch (error) {
-    res.status(500).json({ error: 'Error al obtener productos', detail: error.message });
+    res.status(error.status || 500).json({ error: 'Error al obtener productos', detail: error.message });
   }
 };
 

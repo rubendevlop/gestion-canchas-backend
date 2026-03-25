@@ -1,6 +1,7 @@
 import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Reservation from '../models/Reservation.js';
+import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
 async function ensureOwnerOwnsComplex(complexId, dbUser) {
   if (dbUser.role === 'superadmin') return;
@@ -35,6 +36,8 @@ export const createReservation = async (req, res) => {
 
     if (user.role === 'owner') {
       await ensureOwnerOwnsComplex(court.complexId, user);
+    } else {
+      await assertComplexClientAccess(court.complexId, { createBillingIfMissing: true });
     }
 
     const dateObj = new Date(date);
@@ -101,9 +104,17 @@ export const getTakenSlots = async (req, res) => {
       status: { $ne: 'CANCELLED' },
     }).select('startTime');
 
+    if (req.dbUser.role === 'client') {
+      const court = await Court.findById(courtId).select('complexId');
+      if (!court) {
+        return res.status(404).json({ message: 'Cancha no encontrada' });
+      }
+      await assertComplexClientAccess(court.complexId, { createBillingIfMissing: true });
+    }
+
     res.json({ takenHours: reservations.map((reservation) => reservation.startTime) });
   } catch (error) {
-    res.status(500).json({ message: 'Error obteniendo slots', error: error.message });
+    res.status(error.status || 500).json({ message: 'Error obteniendo slots', error: error.message });
   }
 };
 

@@ -1,0 +1,431 @@
+import Complex from '../models/Complex.js';
+import OwnerBilling from '../models/OwnerBilling.js';
+import User from '../models/User.js';
+
+const MP_API_BASE = 'https://api.mercadopago.com';
+const DEFAULT_AMOUNT_ARS = 30000;
+const DEFAULT_CURRENCY = 'ARS';
+const DEFAULT_GRACE_DAYS = 10;
+const DEFAULT_BILLING_MONTHS = 1;
+
+function addMonths(date, months) {
+  const nextDate = new Date(date);
+  nextDate.setMonth(nextDate.getMonth() + months);
+  return nextDate;
+}
+
+function addDays(date, days) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate;
+}
+
+function getFrontendUrl() {
+  return (process.env.FRONTEND_URL || process.env.APP_URL || 'http://localhost:5173').replace(/\/$/, '');
+}
+
+function getBackendUrl() {
+  return (process.env.BACKEND_PUBLIC_URL || process.env.API_URL || 'http://localhost:5000')
+    .replace(/\/api$/, '')
+    .replace(/\/$/, '');
+}
+
+function getBillingAmount() {
+  const parsed = Number(process.env.OWNER_MONTHLY_FEE_ARS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_AMOUNT_ARS;
+}
+
+function getBillingCurrency() {
+  return process.env.OWNER_MONTHLY_FEE_CURRENCY || DEFAULT_CURRENCY;
+}
+
+function getGraceDays() {
+  const parsed = Number(process.env.OWNER_PAYMENT_GRACE_DAYS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_GRACE_DAYS;
+}
+
+function getBillingMonths() {
+  const parsed = Number(process.env.OWNER_BILLING_CYCLE_MONTHS);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_BILLING_MONTHS;
+}
+
+function isMercadoPagoConfigured() {
+  return Boolean(process.env.MERCADOPAGO_ACCESS_TOKEN);
+}
+
+function buildExternalReference(ownerBillingId) {
+  return `owner-billing:${ownerBillingId}`;
+}
+
+function getInvoiceBlockAt(invoice) {
+  return invoice?.dueDate ? new Date(invoice.dueDate) : null;
+}
+
+function getPaidInvoiceGraceEnd(invoice) {
+  return invoice?.accessEndsAt ? addDays(invoice.accessEndsAt, getGraceDays()) : null;
+}
+
+async function mercadopagoRequest(path, options = {}) {
+  const accessToken = process.env.MERCADOPAGO_ACCESS_TOKEN;
+  if (!accessToken) {
+    throw new Error('Mercado Pago no esta configurado.');
+  }
+
+  const response = await fetch(`${MP_API_BASE}${path}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      ...(options.headers || {}),
+    },
+  });
+
+  const data = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(data.message || data.error || 'Mercado Pago rechazo la operacion.');
+  }
+
+  return data;
+}
+
+function serializeInvoice(invoice) {
+  if (!invoice) return null;
+
+  return {
+    id: invoice._id,
+    status: invoice.status,
+    amount: invoice.amount,
+    currency: invoice.currency,
+    dueDate: invoice.dueDate,
+    paidAt: invoice.paidAt,
+    accessStartsAt: invoice.accessStartsAt,
+    accessEndsAt: invoice.accessEndsAt,
+    graceEndsAt: invoice.status === 'PAID' ? getPaidInvoiceGraceEnd(invoice) : getInvoiceBlockAt(invoice),
+    checkoutUrl: invoice.checkoutUrl || invoice.checkoutSandboxUrl || '',
+    preferenceId: invoice.mercadoPagoPreferenceId || '',
+    paymentId: invoice.mercadoPagoPaymentId || '',
+    paymentStatus: invoice.mercadoPagoStatus || '',
+    createdAt: invoice.createdAt,
+  };
+}
+
+async function getLatestPendingInvoice(ownerId) {
+  return OwnerBilling.findOne({ ownerId, status: 'PENDING' }).sort({ createdAt: -1 });
+}
+
+async function getLatestPaidInvoice(ownerId) {
+  return OwnerBilling.findOne({ ownerId, status: 'PAID' }).sort({ accessEndsAt: -1 });
+}
+
+async function getActivePaidInvoice(ownerId, now) {
+  return OwnerBilling.findOne({
+    ownerId,
+    status: 'PAID',
+    accessEndsAt: { $gt: now },
+  }).sort({ accessEndsAt: -1 });
+}
+
+async function createPendingInvoice(owner, dueDate) {
+  const invoice = new OwnerBilling({
+    ownerId: owner._id,
+    amount: getBillingAmount(),
+    currency: getBillingCurrency(),
+    dueDate,
+    externalReference: `owner-billing:draft:${owner._id}:${Date.now()}`,
+  });
+
+  invoice.externalReference = buildExternalReference(invoice._id.toString());
+  await invoice.save();
+  return invoice;
+}
+
+async function ensureCheckoutPreference(invoice, owner) {
+  if (invoice.checkoutUrl || !isMercadoPagoConfigured()) {
+    return invoice;
+  }
+
+  const frontendUrl = getFrontendUrl();
+  const backendUrl = getBackendUrl();
+  const title = `Acceso mensual Gestion Pro - ${owner.displayName || owner.email}`;
+
+  const preference = await mercadopagoRequest('/checkout/preferences', {
+    method: 'POST',
+    body: JSON.stringify({
+      items: [
+        {
+          title,
+          description: 'Pago mensual de acceso al panel owner',
+          quantity: 1,
+          currency_id: invoice.currency,
+          unit_price: invoice.amount,
+        },
+      ],
+      payer: {
+        email: owner.email,
+        name: owner.displayName,
+      },
+      back_urls: {
+        success: `${frontendUrl}/dashboard?mp_status=success`,
+        pending: `${frontendUrl}/dashboard?mp_status=pending`,
+        failure: `${frontendUrl}/dashboard?mp_status=failure`,
+      },
+      auto_return: 'approved',
+      external_reference: invoice.externalReference,
+      notification_url: `${backendUrl}/api/owner-billing/webhook/mercadopago`,
+      metadata: {
+        ownerBillingId: invoice._id.toString(),
+        ownerId: owner._id.toString(),
+        scope: 'owner-monthly-access',
+      },
+    }),
+  });
+
+  invoice.checkoutUrl = preference.init_point || '';
+  invoice.checkoutSandboxUrl = preference.sandbox_init_point || '';
+  invoice.mercadoPagoPreferenceId = preference.id || '';
+  invoice.mercadoPagoStatus = 'preference_created';
+  await invoice.save();
+
+  return invoice;
+}
+
+async function ensureInvoiceForCurrentCycle(owner, latestPaidInvoice, createIfMissing) {
+  if (!createIfMissing) {
+    return getLatestPendingInvoice(owner._id);
+  }
+
+  let pendingInvoice = await getLatestPendingInvoice(owner._id);
+  if (pendingInvoice) {
+    return ensureCheckoutPreference(pendingInvoice, owner);
+  }
+
+  const now = new Date();
+  const dueDate = latestPaidInvoice?.accessEndsAt
+    ? addDays(new Date(latestPaidInvoice.accessEndsAt), getGraceDays())
+    : addDays(now, getGraceDays());
+
+  pendingInvoice = await createPendingInvoice(owner, dueDate);
+  return ensureCheckoutPreference(pendingInvoice, owner);
+}
+
+export async function getOwnerBillingState(owner, options = {}) {
+  const { createIfMissing = true } = options;
+
+  if (!owner || owner.role !== 'owner' || owner.ownerStatus !== 'APPROVED') {
+    return {
+      required: false,
+      provider: 'mercadopago',
+      providerConfigured: isMercadoPagoConfigured(),
+      hasAccess: true,
+      status: 'NOT_REQUIRED',
+      amount: getBillingAmount(),
+      currency: getBillingCurrency(),
+      graceDays: getGraceDays(),
+      currentInvoice: null,
+      lastPaidInvoice: null,
+      accessEndsAt: null,
+      blockAt: null,
+    };
+  }
+
+  const now = new Date();
+  const activePaidInvoice = await getActivePaidInvoice(owner._id, now);
+  const latestPaidInvoice = activePaidInvoice || (await getLatestPaidInvoice(owner._id));
+
+  if (activePaidInvoice) {
+    return {
+      required: true,
+      provider: 'mercadopago',
+      providerConfigured: isMercadoPagoConfigured(),
+      hasAccess: true,
+      status: 'ACTIVE',
+      amount: activePaidInvoice.amount,
+      currency: activePaidInvoice.currency,
+      graceDays: getGraceDays(),
+      currentInvoice: serializeInvoice(activePaidInvoice),
+      lastPaidInvoice: serializeInvoice(activePaidInvoice),
+      accessEndsAt: activePaidInvoice.accessEndsAt,
+      blockAt: getPaidInvoiceGraceEnd(activePaidInvoice),
+    };
+  }
+
+  const pendingInvoice = await ensureInvoiceForCurrentCycle(owner, latestPaidInvoice, createIfMissing);
+  const blockAt = getInvoiceBlockAt(pendingInvoice);
+  const hasGraceAccess = Boolean(blockAt && blockAt > now);
+
+  return {
+    required: true,
+    provider: 'mercadopago',
+    providerConfigured: isMercadoPagoConfigured(),
+    hasAccess: hasGraceAccess,
+    status: hasGraceAccess ? 'GRACE' : 'BLOCKED',
+    amount: pendingInvoice?.amount ?? getBillingAmount(),
+    currency: pendingInvoice?.currency ?? getBillingCurrency(),
+    graceDays: getGraceDays(),
+    currentInvoice: serializeInvoice(pendingInvoice),
+    lastPaidInvoice: serializeInvoice(latestPaidInvoice),
+    accessEndsAt: latestPaidInvoice?.accessEndsAt || null,
+    blockAt,
+  };
+}
+
+export async function getOwnerBillingHistory(ownerId) {
+  const invoices = await OwnerBilling.find({ ownerId }).sort({ createdAt: -1 });
+  return invoices.map(serializeInvoice);
+}
+
+export async function createOrReuseOwnerCheckout(owner) {
+  const latestPaidInvoice = await getLatestPaidInvoice(owner._id);
+  let pendingInvoice = await getLatestPendingInvoice(owner._id);
+
+  if (!pendingInvoice) {
+    const dueDate = latestPaidInvoice?.accessEndsAt
+      ? addDays(new Date(latestPaidInvoice.accessEndsAt), getGraceDays())
+      : addDays(new Date(), getGraceDays());
+
+    pendingInvoice = await createPendingInvoice(owner, dueDate);
+  }
+
+  return ensureCheckoutPreference(pendingInvoice, owner);
+}
+
+export async function syncOwnerBillingPayment(paymentId) {
+  const payment = await mercadopagoRequest(`/v1/payments/${paymentId}`);
+
+  let invoice = null;
+
+  if (payment.external_reference) {
+    invoice = await OwnerBilling.findOne({ externalReference: payment.external_reference });
+  }
+
+  if (!invoice && payment.metadata?.ownerBillingId) {
+    invoice = await OwnerBilling.findById(payment.metadata.ownerBillingId);
+  }
+
+  if (!invoice) {
+    return { ok: false, reason: 'invoice_not_found' };
+  }
+
+  invoice.mercadoPagoPaymentId = String(payment.id || paymentId);
+  invoice.mercadoPagoStatus = payment.status || '';
+  invoice.mercadoPagoStatusDetail = payment.status_detail || '';
+
+  if (payment.status === 'approved') {
+    const approvedAt = payment.date_approved ? new Date(payment.date_approved) : new Date();
+    const lastPaidInvoice = await OwnerBilling.findOne({
+      ownerId: invoice.ownerId,
+      status: 'PAID',
+      _id: { $ne: invoice._id },
+    }).sort({ accessEndsAt: -1 });
+
+    const accessStart =
+      lastPaidInvoice?.accessEndsAt && lastPaidInvoice.accessEndsAt > approvedAt
+        ? new Date(lastPaidInvoice.accessEndsAt)
+        : approvedAt;
+
+    invoice.status = 'PAID';
+    invoice.paidAt = approvedAt;
+    invoice.accessStartsAt = accessStart;
+    invoice.accessEndsAt = addMonths(accessStart, getBillingMonths());
+  } else if (payment.status === 'cancelled') {
+    invoice.status = 'CANCELLED';
+  } else if (!['pending', 'in_process'].includes(payment.status)) {
+    invoice.status = 'FAILED';
+  }
+
+  await invoice.save();
+
+  return {
+    ok: true,
+    invoice: serializeInvoice(invoice),
+    paymentStatus: payment.status,
+  };
+}
+
+async function resolveComplexOwner(complex) {
+  if (!complex) return null;
+
+  if (complex.ownerId && typeof complex.ownerId === 'object' && complex.ownerId.email) {
+    return complex.ownerId;
+  }
+
+  return User.findById(complex.ownerId);
+}
+
+export async function getComplexOperationalState(complexOrId, options = {}) {
+  const { createBillingIfMissing = true } = options;
+
+  const complex =
+    typeof complexOrId === 'string'
+      ? await Complex.findById(complexOrId).populate('ownerId')
+      : complexOrId;
+
+  if (!complex) {
+    return { isOperational: false, reason: 'COMPLEX_NOT_FOUND', complex: null, ownerBilling: null };
+  }
+
+  if (!complex.isActive) {
+    return { isOperational: false, reason: 'COMPLEX_INACTIVE', complex, ownerBilling: null };
+  }
+
+  const owner = await resolveComplexOwner(complex);
+  if (!owner || owner.role !== 'owner' || owner.ownerStatus !== 'APPROVED') {
+    return { isOperational: false, reason: 'OWNER_NOT_APPROVED', complex, ownerBilling: null };
+  }
+
+  const ownerBilling = await getOwnerBillingState(owner, {
+    createIfMissing: createBillingIfMissing,
+  });
+
+  return {
+    isOperational: ownerBilling.hasAccess,
+    reason: ownerBilling.hasAccess ? null : 'OWNER_PAYMENT_REQUIRED',
+    complex,
+    owner,
+    ownerBilling,
+  };
+}
+
+export async function assertComplexClientAccess(complexId, options = {}) {
+  const state = await getComplexOperationalState(complexId, options);
+
+  if (!state.complex) {
+    const error = new Error('Complejo no encontrado');
+    error.status = 404;
+    throw error;
+  }
+
+  if (!state.isOperational) {
+    const error = new Error('Este complejo no esta disponible temporalmente.');
+    error.status = 403;
+    error.code = state.reason;
+    error.ownerBilling = state.ownerBilling;
+    throw error;
+  }
+
+  return state;
+}
+
+export async function filterClientVisibleComplexes(complexes, options = {}) {
+  const { createBillingIfMissing = true } = options;
+  const evaluated = await Promise.all(
+    complexes.map(async (complex) => ({
+      complex,
+      state: await getComplexOperationalState(complex, { createBillingIfMissing }),
+    })),
+  );
+
+  return evaluated.filter((item) => item.state.isOperational).map((item) => item.complex);
+}
+
+export function extractMercadoPagoPaymentId(payload = {}) {
+  return (
+    payload?.data?.id ||
+    payload?.id ||
+    payload?.resource?.split('/').pop() ||
+    payload?.query?.id ||
+    payload?.query?.['data.id'] ||
+    null
+  );
+}
