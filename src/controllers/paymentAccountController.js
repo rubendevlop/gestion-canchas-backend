@@ -39,6 +39,8 @@ export const getCurrentOwnerPaymentAccount = async (req, res) => {
     res.status(error.status || 500).json({
       message: error.message || 'No se pudo obtener la cuenta de cobro.',
       error: error.message,
+      oauthReady: isMercadoPagoOAuthReady(),
+      oauthSetup: getMercadoPagoOAuthSetupSummary(),
     });
   }
 };
@@ -73,6 +75,8 @@ export const getMercadoPagoConnectUrl = async (req, res) => {
     res.status(error.status || 500).json({
       message: error.message || 'No se pudo iniciar la conexion con Mercado Pago.',
       error: error.message,
+      oauthReady: isMercadoPagoOAuthReady(),
+      oauthSetup: getMercadoPagoOAuthSetupSummary(),
     });
   }
 };
