@@ -406,7 +406,7 @@ export const getComplexReservations = async (req, res) => {
     } else if (req.dbUser.role === 'owner') {
       const ownedComplex = await Complex.findOne({ ownerId: req.dbUser._id }).select('_id');
       if (!ownedComplex) {
-        return res.status(404).json({ message: 'No tenes ningun complejo configurado.' });
+        return res.json([]);
       }
       filter.complexId = ownedComplex._id;
     }
