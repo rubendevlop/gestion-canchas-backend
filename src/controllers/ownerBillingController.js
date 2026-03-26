@@ -179,6 +179,59 @@ export const getAdminOwnerBillingInvoices = async (req, res) => {
   }
 };
 
+export const approveAdminOwnerBillingInvoice = async (req, res) => {
+  try {
+    const invoice = await OwnerBilling.findById(req.params.id).populate('ownerId', 'displayName email ownerStatus');
+
+    if (!invoice) {
+      return res.status(404).json({ message: 'Factura no encontrada.' });
+    }
+
+    if (invoice.status === 'PAID') {
+      return res.status(400).json({ message: 'La factura ya esta pagada.' });
+    }
+
+    const now = new Date();
+
+    // Calcular accessEndsAt en base a la ultima factura PAID del mismo owner
+    const lastPaid = await OwnerBilling.findOne({
+      ownerId: invoice.ownerId,
+      status: 'PAID',
+      _id: { $ne: invoice._id },
+    }).sort({ accessEndsAt: -1 });
+
+    const billingMonths = Number(process.env.OWNER_BILLING_CYCLE_MONTHS) || 1;
+
+    const accessStart =
+      lastPaid?.accessEndsAt && new Date(lastPaid.accessEndsAt) > now
+        ? new Date(lastPaid.accessEndsAt)
+        : now;
+
+    const accessEnd = new Date(accessStart);
+    accessEnd.setMonth(accessEnd.getMonth() + billingMonths);
+
+    invoice.status = 'PAID';
+    invoice.paidAt = now;
+    invoice.accessStartsAt = accessStart;
+    invoice.accessEndsAt = accessEnd;
+    await invoice.save();
+
+    res.json({
+      message: `Factura aprobada manualmente. Acceso habilitado hasta ${accessEnd.toLocaleDateString('es-AR')}.`,
+      invoice: {
+        id: invoice._id,
+        status: invoice.status,
+        paidAt: invoice.paidAt,
+        accessStartsAt: invoice.accessStartsAt,
+        accessEndsAt: invoice.accessEndsAt,
+        owner: invoice.ownerId,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: 'Error aprobando la factura', error: error.message });
+  }
+};
+
 export const handleMercadoPagoWebhook = async (req, res) => {
   try {
     if (!validateMercadoPagoWebhookSignature(req)) {
