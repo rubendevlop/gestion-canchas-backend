@@ -11,6 +11,7 @@ import {
   isCancelledMercadoPagoOrder,
   isFailedMercadoPagoOrder,
   isPendingMercadoPagoOrder,
+  resolveMercadoPagoPayerEmail,
   validateMercadoPagoWebhookSignature,
 } from '../utils/mercadoPago.js';
 import { normalizeBookingHours } from '../utils/bookingHours.js';
@@ -48,6 +49,11 @@ function serializeReservationPaymentSession(
   complex,
   paymentProvider = {},
 ) {
+  const payer = resolveMercadoPagoPayerEmail({
+    fallbackEmail: user.email,
+    providerMode: paymentProvider.accountSummary?.mode,
+  });
+
   return {
     provider: 'mercadopago',
     checkoutMode: 'orders',
@@ -58,7 +64,9 @@ function serializeReservationPaymentSession(
     currency: 'ARS',
     description: buildReservationDescription(reservation, court, complex),
     payer: {
-      email: user.email,
+      email: payer.email,
+      usesConfiguredTestEmail: payer.usesConfiguredTestEmail,
+      requiresTestUser: payer.requiresTestUser,
     },
     providerAccount: paymentProvider.accountSummary
       ? {
@@ -319,20 +327,39 @@ export const processReservationPayment = async (req, res) => {
       });
     }
 
-    const mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
-      externalReference: reservation.externalReference,
-      totalAmount: reservation.totalPrice,
-      currency: 'ARS',
-      description: buildReservationDescription(reservation, reservation.court, reservation.complexId),
-      payer: {
-        email: formData?.payer?.email || req.dbUser.email,
-        identification: formData?.payer?.identification || undefined,
-      },
-      formData,
-      additionalData,
-      notificationPath: '/api/reservations/webhook/mercadopago',
-      accessToken: paymentProvider.accessToken,
+    const payer = resolveMercadoPagoPayerEmail({
+      requestedEmail: formData?.payer?.email,
+      fallbackEmail: req.dbUser.email,
+      providerMode: paymentProvider.accountSummary?.mode,
     });
+
+    let mercadoPagoOrder;
+    try {
+      mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
+        externalReference: reservation.externalReference,
+        totalAmount: reservation.totalPrice,
+        currency: 'ARS',
+        description: buildReservationDescription(reservation, reservation.court, reservation.complexId),
+        payer: {
+          email: payer.email,
+          identification: formData?.payer?.identification || undefined,
+        },
+        formData,
+        additionalData,
+        notificationPath: '/api/reservations/webhook/mercadopago',
+        accessToken: paymentProvider.accessToken,
+      });
+    } catch (paymentError) {
+      if (payer.requiresTestUser) {
+        const error = new Error(
+          `${paymentError.message || 'Mercado Pago rechazo la operacion.'} La cuenta de cobro esta en modo prueba. Usa un comprador de prueba de Mercado Pago o configura MERCADOPAGO_TEST_PAYER_EMAIL en el backend.`,
+        );
+        error.status = paymentError.status || 400;
+        throw error;
+      }
+
+      throw paymentError;
+    }
 
     const syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder);
 

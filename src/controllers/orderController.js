@@ -15,6 +15,7 @@ import {
   isCancelledMercadoPagoOrder,
   isFailedMercadoPagoOrder,
   isPendingMercadoPagoOrder,
+  resolveMercadoPagoPayerEmail,
 } from '../utils/mercadoPago.js';
 
 function buildExternalReference(orderId) {
@@ -26,6 +27,11 @@ function buildOrderDescription(order, complex) {
 }
 
 function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}) {
+  const payer = resolveMercadoPagoPayerEmail({
+    fallbackEmail: user.email,
+    providerMode: paymentProvider.accountSummary?.mode,
+  });
+
   return {
     provider: 'mercadopago',
     checkoutMode: 'orders',
@@ -36,7 +42,9 @@ function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}
     currency: 'ARS',
     description: buildOrderDescription(order, complex),
     payer: {
-      email: user.email,
+      email: payer.email,
+      usesConfiguredTestEmail: payer.usesConfiguredTestEmail,
+      requiresTestUser: payer.requiresTestUser,
     },
     providerAccount: paymentProvider.accountSummary
       ? {
@@ -207,20 +215,39 @@ export const processOrderPayment = async (req, res) => {
       });
     }
 
-    const mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
-      externalReference: localOrder.externalReference,
-      totalAmount: localOrder.totalAmount,
-      currency: 'ARS',
-      description: buildOrderDescription(localOrder, localOrder.complexId),
-      payer: {
-        email: formData?.payer?.email || req.dbUser.email,
-        identification: formData?.payer?.identification || undefined,
-      },
-      formData,
-      additionalData,
-      notificationPath: '/api/orders/webhook/mercadopago',
-      accessToken: paymentProvider.accessToken,
+    const payer = resolveMercadoPagoPayerEmail({
+      requestedEmail: formData?.payer?.email,
+      fallbackEmail: req.dbUser.email,
+      providerMode: paymentProvider.accountSummary?.mode,
     });
+
+    let mercadoPagoOrder;
+    try {
+      mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
+        externalReference: localOrder.externalReference,
+        totalAmount: localOrder.totalAmount,
+        currency: 'ARS',
+        description: buildOrderDescription(localOrder, localOrder.complexId),
+        payer: {
+          email: payer.email,
+          identification: formData?.payer?.identification || undefined,
+        },
+        formData,
+        additionalData,
+        notificationPath: '/api/orders/webhook/mercadopago',
+        accessToken: paymentProvider.accessToken,
+      });
+    } catch (paymentError) {
+      if (payer.requiresTestUser) {
+        const error = new Error(
+          `${paymentError.message || 'Mercado Pago rechazo la operacion.'} La cuenta de cobro esta en modo prueba. Usa un comprador de prueba de Mercado Pago o configura MERCADOPAGO_TEST_PAYER_EMAIL en el backend.`,
+        );
+        error.status = paymentError.status || 400;
+        throw error;
+      }
+
+      throw paymentError;
+    }
 
     const syncedOrder = await syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder);
 

@@ -41,6 +41,35 @@ export function getMercadoPagoAccessToken(overrideToken = '') {
   return String(overrideToken || process.env.MERCADOPAGO_ACCESS_TOKEN || '').trim();
 }
 
+export function getMercadoPagoTestPayerEmail() {
+  return String(process.env.MERCADOPAGO_TEST_PAYER_EMAIL || '').trim();
+}
+
+export function resolveMercadoPagoPayerEmail({
+  requestedEmail = '',
+  fallbackEmail = '',
+  providerMode = '',
+} = {}) {
+  const configuredTestEmail = getMercadoPagoTestPayerEmail();
+  const normalizedMode = String(providerMode || '').trim().toLowerCase();
+  const requiresTestUser = normalizedMode === 'sandbox';
+  const isNonProduction = String(process.env.NODE_ENV || '').toLowerCase() !== 'production';
+
+  if (configuredTestEmail && (requiresTestUser || isNonProduction)) {
+    return {
+      email: configuredTestEmail,
+      usesConfiguredTestEmail: true,
+      requiresTestUser,
+    };
+  }
+
+  return {
+    email: String(requestedEmail || '').trim() || String(fallbackEmail || '').trim(),
+    usesConfiguredTestEmail: false,
+    requiresTestUser,
+  };
+}
+
 export function isMercadoPagoConfigured() {
   return Boolean(getMercadoPagoAccessToken() && getMercadoPagoPublicKey());
 }
