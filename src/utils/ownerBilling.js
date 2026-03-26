@@ -82,7 +82,7 @@ function resolveOwnerBillingPayer(owner, requestedEmail = '') {
 }
 
 function buildExternalReference(ownerBillingId) {
-  return `owner-billing:${ownerBillingId}`;
+  return `owner-billing-${ownerBillingId}`;
 }
 
 function buildInvoiceDescription(owner) {
@@ -164,7 +164,7 @@ async function createPendingInvoice(owner, dueDate) {
     amount: getBillingAmount(),
     currency: getBillingCurrency(),
     dueDate,
-    externalReference: `owner-billing:draft:${owner._id}:${Date.now()}`,
+    externalReference: `owner-billing-draft-${owner._id}-${Date.now()}`,
   });
 
   invoice.externalReference = buildExternalReference(invoice._id.toString());

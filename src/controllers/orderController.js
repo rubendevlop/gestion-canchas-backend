@@ -19,7 +19,7 @@ import {
 } from '../utils/mercadoPago.js';
 
 function buildExternalReference(orderId) {
-  return `store-order:${orderId}`;
+  return `store-order-${orderId}`;
 }
 
 function buildOrderDescription(order, complex) {
@@ -173,7 +173,7 @@ export const createOrder = async (req, res) => {
     const newOrder = new Order({
       userId: req.dbUser._id,
       complexId,
-      externalReference: `draft-order:${req.dbUser._id}:${Date.now()}`,
+      externalReference: `draft-order-${req.dbUser._id}-${Date.now()}`,
       items: normalizedItems,
       totalAmount,
       status: 'pending',

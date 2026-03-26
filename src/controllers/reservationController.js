@@ -39,7 +39,7 @@ async function ensureOwnerOwnsComplex(complexId, dbUser) {
 }
 
 function buildReservationExternalReference(reservationId) {
-  return `reservation:${reservationId}`;
+  return `reservation-${reservationId}`;
 }
 
 function buildReservationDescription(reservation, court, complex) {
@@ -224,7 +224,7 @@ export const createReservation = async (req, res) => {
       endTime,
       totalPrice: court.pricePerHour,
       status: 'PENDING',
-      externalReference: `reservation:draft:${user._id}:${Date.now()}`,
+      externalReference: `reservation-draft-${user._id}-${Date.now()}`,
     });
 
     reservation.externalReference = buildReservationExternalReference(reservation._id.toString());

@@ -97,8 +97,11 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
+    const causeDescription = Array.isArray(data.cause)
+      ? data.cause.map((cause) => cause?.description).filter(Boolean).join(' | ')
+      : '';
     const error = new Error(
-      data.message || data.error || data.cause?.[0]?.description || 'Mercado Pago rechazo la operacion.',
+      causeDescription || data.message || data.error || 'Mercado Pago rechazo la operacion.',
     );
     error.status = response.status;
     error.payload = data;
@@ -126,6 +129,21 @@ function inferPaymentType(paymentTypeId = '') {
   return 'credit_card';
 }
 
+export function normalizeExternalReference(value = '') {
+  const normalized = String(value || '')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+
+  return normalized.slice(0, 64) || `ref-${Date.now()}`;
+}
+
+function formatMercadoPagoAmount(value) {
+  const amount = Number(value || 0);
+  return Number.isFinite(amount) ? amount.toFixed(2) : '0.00';
+}
+
 export function buildOrderPaymentPayload(formData = {}, additionalData = {}, fallbackAmount = 0) {
   const amount = Number(formData.transaction_amount || fallbackAmount || 0);
 
@@ -138,7 +156,7 @@ export function buildOrderPaymentPayload(formData = {}, additionalData = {}, fal
   }
 
   return {
-    amount: Number(amount.toFixed(2)),
+    amount: formatMercadoPagoAmount(amount),
     payment_method: {
       id: String(formData.payment_method_id),
       type: inferPaymentType(additionalData.paymentTypeId || formData.payment_method_id),
@@ -168,11 +186,12 @@ export async function createAutomaticMercadoPagoOrder({
   notificationPath,
   accessToken = '',
 }) {
+  const normalizedReference = normalizeExternalReference(externalReference);
   const payload = {
     type: 'online',
     processing_mode: 'automatic',
-    external_reference: externalReference,
-    total_amount: Number(Number(totalAmount || 0).toFixed(2)),
+    external_reference: normalizedReference,
+    total_amount: formatMercadoPagoAmount(totalAmount),
     currency,
     description,
     payer: {
@@ -198,7 +217,7 @@ export async function createAutomaticMercadoPagoOrder({
       body: JSON.stringify(payload),
     },
     {
-      idempotencyKey: `${externalReference}:${String(formData.token || '').slice(-16)}`,
+      idempotencyKey: `${normalizedReference}-${String(formData.token || '').slice(-16)}`,
       accessToken,
     },
   );
