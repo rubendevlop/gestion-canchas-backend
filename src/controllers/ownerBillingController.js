@@ -192,6 +192,7 @@ export const approveAdminOwnerBillingInvoice = async (req, res) => {
     }
 
     const now = new Date();
+    const { note, accessEndsAt: customAccessEndsAt } = req.body || {};
 
     // Calcular accessEndsAt en base a la ultima factura PAID del mismo owner
     const lastPaid = await OwnerBilling.findOne({
@@ -207,13 +208,24 @@ export const approveAdminOwnerBillingInvoice = async (req, res) => {
         ? new Date(lastPaid.accessEndsAt)
         : now;
 
-    const accessEnd = new Date(accessStart);
-    accessEnd.setMonth(accessEnd.getMonth() + billingMonths);
+    let accessEnd;
+    if (customAccessEndsAt) {
+      accessEnd = new Date(customAccessEndsAt);
+      if (isNaN(accessEnd.getTime())) {
+        return res.status(400).json({ message: 'La fecha de vencimiento de acceso es invalida.' });
+      }
+    } else {
+      accessEnd = new Date(accessStart);
+      accessEnd.setMonth(accessEnd.getMonth() + billingMonths);
+    }
 
     invoice.status = 'PAID';
     invoice.paidAt = now;
     invoice.accessStartsAt = accessStart;
     invoice.accessEndsAt = accessEnd;
+    if (note) {
+      invoice.adminNote = String(note).trim().slice(0, 500);
+    }
     await invoice.save();
 
     res.json({
@@ -224,6 +236,7 @@ export const approveAdminOwnerBillingInvoice = async (req, res) => {
         paidAt: invoice.paidAt,
         accessStartsAt: invoice.accessStartsAt,
         accessEndsAt: invoice.accessEndsAt,
+        adminNote: invoice.adminNote || '',
         owner: invoice.ownerId,
       },
     });
