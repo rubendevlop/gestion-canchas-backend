@@ -73,6 +73,42 @@ export function isMercadoPagoConfigured() {
   return Boolean(getMercadoPagoAccessToken() && getMercadoPagoPublicKey());
 }
 
+function sanitizeMercadoPagoBodyForLog(body) {
+  if (!body) {
+    return null;
+  }
+
+  try {
+    const parsed = typeof body === 'string' ? JSON.parse(body) : body;
+    const payments = Array.isArray(parsed?.transactions?.payments) ? parsed.transactions.payments : [];
+
+    return {
+      type: parsed?.type,
+      processing_mode: parsed?.processing_mode,
+      external_reference: parsed?.external_reference,
+      total_amount: parsed?.total_amount,
+      currency: parsed?.currency,
+      payer: {
+        hasEmail: Boolean(parsed?.payer?.email),
+        hasIdentification: Boolean(parsed?.payer?.identification),
+      },
+      transactions: {
+        payments: payments.map((payment) => ({
+          amount: payment?.amount,
+          payment_method: {
+            id: payment?.payment_method?.id || '',
+            type: payment?.payment_method?.type || '',
+            installments: payment?.payment_method?.installments || 0,
+            hasToken: Boolean(payment?.payment_method?.token),
+          },
+        })),
+      },
+    };
+  } catch {
+    return { invalidBody: true };
+  }
+}
+
 export async function mercadopagoRequest(path, options = {}, requestOptions = {}) {
   const accessToken = getMercadoPagoAccessToken(requestOptions.accessToken);
   if (!accessToken) {
@@ -100,6 +136,22 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
     const causeDescription = Array.isArray(data.cause)
       ? data.cause.map((cause) => cause?.description).filter(Boolean).join(' | ')
       : '';
+    console.error('Mercado Pago request failed', {
+      path,
+      status: response.status,
+      request: sanitizeMercadoPagoBodyForLog(options.body),
+      response: {
+        message: data.message || '',
+        error: data.error || '',
+        cause: Array.isArray(data.cause)
+          ? data.cause.map((cause) => ({
+              code: cause?.code,
+              description: cause?.description,
+            }))
+          : [],
+      },
+    });
+
     const error = new Error(
       causeDescription || data.message || data.error || 'Mercado Pago rechazo la operacion.',
     );
