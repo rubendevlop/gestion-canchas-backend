@@ -207,7 +207,7 @@ export function buildOrderPaymentPayload(formData = {}, additionalData = {}, fal
     throw new Error('Mercado Pago no informo el medio de pago.');
   }
 
-  return {
+  const payment = {
     amount: formatMercadoPagoAmount(amount),
     payment_method: {
       id: String(formData.payment_method_id),
@@ -216,6 +216,16 @@ export function buildOrderPaymentPayload(formData = {}, additionalData = {}, fal
       installments: Math.max(1, Number(formData.installments) || 1),
     },
   };
+
+  if (formData.issuer_id) {
+    payment.payment_method.issuer_id = String(formData.issuer_id);
+  }
+
+  if (formData.payment_method_option_id) {
+    payment.payment_method.payment_method_option_id = String(formData.payment_method_option_id);
+  }
+
+  return payment;
 }
 
 export function buildWebhookUrl(pathname) {
@@ -244,8 +254,6 @@ export async function createAutomaticMercadoPagoOrder({
     processing_mode: 'automatic',
     external_reference: normalizedReference,
     total_amount: formatMercadoPagoAmount(totalAmount),
-    currency,
-    description,
     payer: {
       email: payer.email,
       ...(payer.identification ? { identification: payer.identification } : {}),
@@ -254,6 +262,15 @@ export async function createAutomaticMercadoPagoOrder({
       payments: [buildOrderPaymentPayload(formData, additionalData, totalAmount)],
     },
   };
+
+  if (currency && String(currency).trim()) {
+    payload.currency = String(currency).trim();
+  }
+
+  // Keep description optional; some collectors reject richer payloads more often than the minimal official example.
+  if (description && String(description).trim()) {
+    payload.description = String(description).trim();
+  }
 
   if (notificationPath) {
     const notificationUrl = buildWebhookUrl(notificationPath);
