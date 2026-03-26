@@ -72,18 +72,41 @@ function isPublicHttpUrl(value = '') {
   }
 }
 
+function getMercadoPagoOAuthReadiness() {
+  const storageReady = isPaymentAccountStorageReady();
+  const oauthStateSecret = Boolean(getOAuthStateSecret());
+  const clientId = Boolean(getMercadoPagoClientId());
+  const clientSecret = Boolean(getMercadoPagoClientSecret());
+  const backendUrl = getBackendUrl();
+  const frontendUrl = getFrontendUrl();
+  const backendPublicUrl = isPublicHttpUrl(backendUrl);
+  const frontendPublicUrl = isPublicHttpUrl(frontendUrl);
+
+  return {
+    storageReady,
+    oauthStateSecret,
+    clientId,
+    clientSecret,
+    backendPublicUrl,
+    frontendPublicUrl,
+    backendUrl,
+    frontendUrl,
+  };
+}
+
 export function isPaymentAccountStorageReady() {
   return Boolean(getEncryptionKey());
 }
 
 export function isMercadoPagoOAuthReady() {
+  const readiness = getMercadoPagoOAuthReadiness();
   return Boolean(
-    isPaymentAccountStorageReady() &&
-      getOAuthStateSecret() &&
-      getMercadoPagoClientId() &&
-      getMercadoPagoClientSecret() &&
-      isPublicHttpUrl(getBackendUrl()) &&
-      isPublicHttpUrl(getFrontendUrl()),
+    readiness.storageReady &&
+      readiness.oauthStateSecret &&
+      readiness.clientId &&
+      readiness.clientSecret &&
+      readiness.backendPublicUrl &&
+      readiness.frontendPublicUrl,
   );
 }
 
@@ -111,8 +134,18 @@ function assertMercadoPagoOAuthReady() {
     return;
   }
 
+  const readiness = getMercadoPagoOAuthReadiness();
+  const missing = [];
+
+  if (!readiness.clientId) missing.push('MERCADOPAGO_CLIENT_ID');
+  if (!readiness.clientSecret) missing.push('MERCADOPAGO_CLIENT_SECRET');
+  if (!readiness.storageReady) missing.push('PAYMENT_ACCOUNT_ENCRYPTION_SECRET');
+  if (!readiness.oauthStateSecret) missing.push('MERCADOPAGO_OAUTH_STATE_SECRET o PAYMENT_ACCOUNT_ENCRYPTION_SECRET');
+  if (!readiness.backendPublicUrl) missing.push('BACKEND_PUBLIC_URL (URL publica, no localhost)');
+  if (!readiness.frontendPublicUrl) missing.push('FRONTEND_URL (URL publica, no localhost)');
+
   const error = new Error(
-    'Faltan variables para conectar Mercado Pago. Revisa MERCADOPAGO_CLIENT_ID, MERCADOPAGO_CLIENT_SECRET, PAYMENT_ACCOUNT_ENCRYPTION_SECRET, BACKEND_PUBLIC_URL y FRONTEND_URL.',
+    `Faltan variables para conectar Mercado Pago: ${missing.join(', ')}.`,
   );
   error.status = 500;
   throw error;
@@ -252,6 +285,8 @@ function getMercadoPagoOAuthRedirectUri() {
 }
 
 export function getMercadoPagoOAuthSetupSummary() {
+  const readiness = getMercadoPagoOAuthReadiness();
+
   return {
     provider: 'mercadopago',
     authType: 'oauth',
@@ -259,8 +294,16 @@ export function getMercadoPagoOAuthSetupSummary() {
     authorizationBaseUrl: getMercadoPagoOAuthAuthorizationBase(),
     redirectUri: getMercadoPagoOAuthRedirectUri(),
     pkceEnabled: isMercadoPagoOAuthPkceEnabled(),
-    backendUrl: getBackendUrl(),
-    frontendUrl: getFrontendUrl(),
+    backendUrl: readiness.backendUrl,
+    frontendUrl: readiness.frontendUrl,
+    readiness: {
+      secureStorageReady: readiness.storageReady,
+      oauthStateSecretReady: readiness.oauthStateSecret,
+      clientIdReady: readiness.clientId,
+      clientSecretReady: readiness.clientSecret,
+      backendPublicUrlReady: readiness.backendPublicUrl,
+      frontendPublicUrlReady: readiness.frontendPublicUrl,
+    },
   };
 }
 
