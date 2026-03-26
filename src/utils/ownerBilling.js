@@ -436,13 +436,27 @@ async function resolveComplexOwner(complex) {
   return User.findById(complex.ownerId);
 }
 
+async function resolveComplexForOperationalState(complexOrId) {
+  if (!complexOrId) {
+    return null;
+  }
+
+  const looksLikeComplexDocument =
+    typeof complexOrId === 'object' &&
+    complexOrId !== null &&
+    ('ownerId' in complexOrId || 'isActive' in complexOrId || 'name' in complexOrId);
+
+  if (looksLikeComplexDocument) {
+    return complexOrId;
+  }
+
+  return Complex.findById(String(complexOrId)).populate('ownerId');
+}
+
 export async function getComplexOperationalState(complexOrId, options = {}) {
   const { createBillingIfMissing = true } = options;
 
-  const complex =
-    typeof complexOrId === 'string'
-      ? await Complex.findById(complexOrId).populate('ownerId')
-      : complexOrId;
+  const complex = await resolveComplexForOperationalState(complexOrId);
 
   if (!complex) {
     return { isOperational: false, reason: 'COMPLEX_NOT_FOUND', complex: null, ownerBilling: null };
