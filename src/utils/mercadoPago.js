@@ -53,9 +53,8 @@ export function resolveMercadoPagoPayerEmail({
   const configuredTestEmail = getMercadoPagoTestPayerEmail();
   const normalizedMode = String(providerMode || '').trim().toLowerCase();
   const requiresTestUser = normalizedMode === 'sandbox';
-  const isNonProduction = String(process.env.NODE_ENV || '').toLowerCase() !== 'production';
 
-  if (configuredTestEmail && (requiresTestUser || isNonProduction)) {
+  if (configuredTestEmail && requiresTestUser) {
     return {
       email: configuredTestEmail,
       usesConfiguredTestEmail: true,

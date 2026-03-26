@@ -6,7 +6,7 @@ import {
   connectOwnerPaymentAccountWithOAuth,
   disconnectOwnerPaymentAccount,
   getMercadoPagoOAuthSetupSummary,
-  getOwnerPaymentAccount,
+  getOwnerPaymentProvider,
   isPaymentAccountStorageReady,
   isMercadoPagoOAuthReady,
   serializePaymentAccount,
@@ -23,13 +23,13 @@ function serializeComplex(complex) {
 
 export const getCurrentOwnerPaymentAccount = async (req, res) => {
   try {
-    const [account, complexes] = await Promise.all([
-      getOwnerPaymentAccount(req.dbUser._id),
+    const [paymentProvider, complexes] = await Promise.all([
+      getOwnerPaymentProvider(req.dbUser._id),
       Complex.find({ ownerId: req.dbUser._id }).select('name isActive').lean(),
     ]);
 
     res.json({
-      account: serializePaymentAccount(account),
+      account: paymentProvider.accountSummary,
       complexes: complexes.map(serializeComplex),
       secureStorageReady: isPaymentAccountStorageReady(),
       oauthReady: isMercadoPagoOAuthReady(),

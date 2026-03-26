@@ -570,12 +570,24 @@ export async function getOwnerPaymentProvider(ownerId) {
     };
   }
 
+  const inferredMode = inferAccountMode({
+    access_token: decryptedAccessToken,
+    public_key: account.publicKey,
+  });
+
+  if (account.mode !== inferredMode) {
+    account.mode = inferredMode;
+    await account.save();
+  }
+
+  const normalizedSummary = serializePaymentAccount(account);
+
   return {
     configured: true,
     publicKey: account.publicKey,
     accessToken: decryptedAccessToken,
     account,
-    accountSummary: serialized,
+    accountSummary: normalizedSummary,
   };
 }
 
