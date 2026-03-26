@@ -205,6 +205,30 @@ export async function createAutomaticMercadoPagoOrder({
   );
 }
 
+export async function createMercadoPagoOrderRefund({
+  orderId,
+  amount,
+  accessToken = '',
+  idempotencyKey = '',
+}) {
+  const payload = {};
+  if (typeof amount === 'number' && Number.isFinite(amount) && amount > 0) {
+    payload.amount = Number(amount.toFixed(2));
+  }
+
+  return mercadopagoRequest(
+    `/v1/orders/${orderId}/refund`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    {
+      idempotencyKey: idempotencyKey || `refund:${orderId}`,
+      accessToken,
+    },
+  );
+}
+
 export async function getMercadoPagoOrder(orderId, accessToken = '') {
   return mercadopagoRequest(`/v1/orders/${orderId}`, {}, { accessToken });
 }
@@ -234,6 +258,18 @@ export function getMercadoPagoOrderSnapshot(order = {}) {
   };
 }
 
+export function getMercadoPagoOrderRefundSnapshot(order = {}) {
+  const refunds = Array.isArray(order?.transactions?.refunds) ? order.transactions.refunds : [];
+  const refund = refunds.length > 0 ? refunds[refunds.length - 1] : null;
+
+  return {
+    refundId: refund?.id ? String(refund.id) : '',
+    refundStatus: String(refund?.status || order?.status_detail || order?.status || ''),
+    refundAmount: Number(refund?.amount ?? refund?.total_amount ?? 0) || 0,
+    refundedAt: refund?.processed_at || refund?.date_created || order?.updated_at || null,
+  };
+}
+
 export function isApprovedMercadoPagoOrder(order = {}) {
   const snapshot = getMercadoPagoOrderSnapshot(order);
   const normalizedStatus = snapshot.paymentStatus.toLowerCase();
@@ -256,6 +292,34 @@ export function isPendingMercadoPagoOrder(order = {}) {
   );
 }
 
+export function isRefundedMercadoPagoOrder(order = {}) {
+  const snapshot = getMercadoPagoOrderSnapshot(order);
+  const refundSnapshot = getMercadoPagoOrderRefundSnapshot(order);
+  const candidates = [
+    snapshot.paymentStatus,
+    snapshot.paymentStatusDetail,
+    snapshot.orderStatus,
+    snapshot.orderStatusDetail,
+    refundSnapshot.refundStatus,
+  ].map((value) => String(value || '').toLowerCase());
+
+  return candidates.includes('refunded') || candidates.includes('fully_refunded');
+}
+
+export function isPartiallyRefundedMercadoPagoOrder(order = {}) {
+  const snapshot = getMercadoPagoOrderSnapshot(order);
+  const refundSnapshot = getMercadoPagoOrderRefundSnapshot(order);
+  const candidates = [
+    snapshot.paymentStatus,
+    snapshot.paymentStatusDetail,
+    snapshot.orderStatus,
+    snapshot.orderStatusDetail,
+    refundSnapshot.refundStatus,
+  ].map((value) => String(value || '').toLowerCase());
+
+  return candidates.includes('partially_refunded');
+}
+
 export function isCancelledMercadoPagoOrder(order = {}) {
   const snapshot = getMercadoPagoOrderSnapshot(order);
   const normalizedStatus = snapshot.paymentStatus.toLowerCase();
@@ -265,7 +329,13 @@ export function isCancelledMercadoPagoOrder(order = {}) {
 }
 
 export function isFailedMercadoPagoOrder(order = {}) {
-  if (isApprovedMercadoPagoOrder(order) || isPendingMercadoPagoOrder(order) || isCancelledMercadoPagoOrder(order)) {
+  if (
+    isApprovedMercadoPagoOrder(order) ||
+    isPendingMercadoPagoOrder(order) ||
+    isCancelledMercadoPagoOrder(order) ||
+    isRefundedMercadoPagoOrder(order) ||
+    isPartiallyRefundedMercadoPagoOrder(order)
+  ) {
     return false;
   }
 

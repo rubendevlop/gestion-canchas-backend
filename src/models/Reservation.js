@@ -9,7 +9,7 @@ const reservationSchema = new mongoose.Schema({
   endTime: { type: String, required: true },
   totalPrice: { type: Number, required: true },
   status: { type: String, enum: ['PENDING', 'CONFIRMED', 'CANCELLED'], default: 'PENDING' },
-  paymentStatus: { type: String, enum: ['UNPAID', 'PARTIAL', 'PAID'], default: 'UNPAID' },
+  paymentStatus: { type: String, enum: ['UNPAID', 'PARTIAL', 'PAID', 'REFUNDED'], default: 'UNPAID' },
   externalReference: { type: String, default: '', index: true },
   mercadoPagoOrderId: { type: String, default: '', index: true },
   mercadoPagoOrderStatus: { type: String, default: '' },
@@ -19,7 +19,11 @@ const reservationSchema = new mongoose.Schema({
   mercadoPagoStatusDetail: { type: String, default: '' },
   mercadoPagoPaymentMethodId: { type: String, default: '' },
   mercadoPagoPaymentMethodType: { type: String, default: '' },
+  mercadoPagoRefundId: { type: String, default: '' },
+  mercadoPagoRefundStatus: { type: String, default: '' },
   paidAt: { type: Date, default: null },
+  refundedAt: { type: Date, default: null },
+  refundAmount: { type: Number, default: 0 },
 }, { timestamps: true });
 
 export default mongoose.model('Reservation', reservationSchema);
