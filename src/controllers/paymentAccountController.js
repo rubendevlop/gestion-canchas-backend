@@ -5,6 +5,7 @@ import {
   buildMercadoPagoOAuthSuccessRedirect,
   connectOwnerPaymentAccountWithOAuth,
   disconnectOwnerPaymentAccount,
+  getMercadoPagoOAuthSetupSummary,
   getOwnerPaymentAccount,
   isPaymentAccountStorageReady,
   isMercadoPagoOAuthReady,
@@ -32,6 +33,7 @@ export const getCurrentOwnerPaymentAccount = async (req, res) => {
       complexes: complexes.map(serializeComplex),
       secureStorageReady: isPaymentAccountStorageReady(),
       oauthReady: isMercadoPagoOAuthReady(),
+      oauthSetup: getMercadoPagoOAuthSetupSummary(),
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -50,6 +52,7 @@ export const updateCurrentOwnerPaymentAccount = async (req, res) => {
       account: serializePaymentAccount(account),
       secureStorageReady: isPaymentAccountStorageReady(),
       oauthReady: isMercadoPagoOAuthReady(),
+      oauthSetup: getMercadoPagoOAuthSetupSummary(),
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -62,7 +65,10 @@ export const updateCurrentOwnerPaymentAccount = async (req, res) => {
 export const getMercadoPagoConnectUrl = async (req, res) => {
   try {
     const data = await buildMercadoPagoOAuthConnectUrl(req.dbUser._id);
-    res.json(data);
+    res.json({
+      ...data,
+      oauthSetup: getMercadoPagoOAuthSetupSummary(),
+    });
   } catch (error) {
     res.status(error.status || 500).json({
       message: error.message || 'No se pudo iniciar la conexion con Mercado Pago.',
@@ -100,6 +106,7 @@ export const deleteCurrentOwnerPaymentAccount = async (req, res) => {
       account: serializePaymentAccount(account),
       secureStorageReady: isPaymentAccountStorageReady(),
       oauthReady: isMercadoPagoOAuthReady(),
+      oauthSetup: getMercadoPagoOAuthSetupSummary(),
     });
   } catch (error) {
     res.status(error.status || 500).json({

@@ -3,7 +3,7 @@ import PaymentAccount from '../models/PaymentAccount.js';
 import { getBackendUrl, getFrontendUrl } from './mercadoPago.js';
 
 const MP_API_BASE = 'https://api.mercadopago.com';
-const MP_OAUTH_BASE = 'https://auth.mercadopago.com/authorization';
+const MP_OAUTH_BASE = 'https://auth.mercadopago.com.ar/authorization';
 const OAUTH_STATE_TTL_MS = 15 * 60 * 1000;
 const TOKEN_REFRESH_BUFFER_MS = 7 * 24 * 60 * 60 * 1000;
 
@@ -29,6 +29,28 @@ function getMercadoPagoClientId() {
 
 function getMercadoPagoClientSecret() {
   return normalizeString(process.env.MERCADOPAGO_CLIENT_SECRET);
+}
+
+function getMercadoPagoOAuthAuthorizationBase() {
+  const configured = normalizeString(process.env.MERCADOPAGO_OAUTH_AUTH_URL);
+  if (!configured) {
+    return MP_OAUTH_BASE;
+  }
+
+  try {
+    return new URL(configured).toString();
+  } catch {
+    return MP_OAUTH_BASE;
+  }
+}
+
+function isMercadoPagoOAuthPkceEnabled() {
+  const configured = normalizeString(process.env.MERCADOPAGO_OAUTH_USE_PKCE).toLowerCase();
+  if (!configured) {
+    return true;
+  }
+
+  return !['0', 'false', 'no', 'off'].includes(configured);
 }
 
 function isPublicHttpUrl(value = '') {
@@ -227,6 +249,19 @@ function getMercadoPagoOAuthRedirectUri() {
   }
 
   return `${backendUrl}/api/payment-account/oauth/callback`;
+}
+
+export function getMercadoPagoOAuthSetupSummary() {
+  return {
+    provider: 'mercadopago',
+    authType: 'oauth',
+    requiredIntegrationModel: 'Marketplace / Split Payments',
+    authorizationBaseUrl: getMercadoPagoOAuthAuthorizationBase(),
+    redirectUri: getMercadoPagoOAuthRedirectUri(),
+    pkceEnabled: isMercadoPagoOAuthPkceEnabled(),
+    backendUrl: getBackendUrl(),
+    frontendUrl: getFrontendUrl(),
+  };
 }
 
 function getFrontendCollectionsUrl(params = {}) {
@@ -535,16 +570,19 @@ export async function buildMercadoPagoOAuthConnectUrl(ownerId) {
 
   const redirectUri = getMercadoPagoOAuthRedirectUri();
   const state = createOAuthState(ownerId);
-  const challenge = createCodeChallenge(state.payload.codeVerifier);
+  const usePkce = isMercadoPagoOAuthPkceEnabled();
+  const challenge = usePkce ? createCodeChallenge(state.payload.codeVerifier) : '';
 
-  const authorizationUrl = new URL(MP_OAUTH_BASE);
+  const authorizationUrl = new URL(getMercadoPagoOAuthAuthorizationBase());
   authorizationUrl.searchParams.set('client_id', getMercadoPagoClientId());
   authorizationUrl.searchParams.set('response_type', 'code');
   authorizationUrl.searchParams.set('platform_id', 'mp');
   authorizationUrl.searchParams.set('redirect_uri', redirectUri);
   authorizationUrl.searchParams.set('state', state.token);
-  authorizationUrl.searchParams.set('code_challenge', challenge);
-  authorizationUrl.searchParams.set('code_challenge_method', 'S256');
+  if (usePkce) {
+    authorizationUrl.searchParams.set('code_challenge', challenge);
+    authorizationUrl.searchParams.set('code_challenge_method', 'S256');
+  }
 
   return {
     authorizationUrl: authorizationUrl.toString(),
@@ -556,14 +594,19 @@ export async function connectOwnerPaymentAccountWithOAuth({ code, state }) {
   assertMercadoPagoOAuthReady();
 
   const oauthState = readOAuthState(state);
-  const tokenResponse = await mercadoPagoOAuthRequest({
+  const tokenRequest = {
     grant_type: 'authorization_code',
     client_id: getMercadoPagoClientId(),
     client_secret: getMercadoPagoClientSecret(),
     code: normalizeString(code),
     redirect_uri: getMercadoPagoOAuthRedirectUri(),
-    code_verifier: oauthState.codeVerifier,
-  });
+  };
+
+  if (isMercadoPagoOAuthPkceEnabled()) {
+    tokenRequest.code_verifier = oauthState.codeVerifier;
+  }
+
+  const tokenResponse = await mercadoPagoOAuthRequest(tokenRequest);
 
   const mpUser = await fetchMercadoPagoUser(tokenResponse.access_token);
   const account = await ensureOwnerPaymentAccount(oauthState.ownerId);
