@@ -3,17 +3,29 @@ import Court from '../models/Court.js';
 import Reservation from '../models/Reservation.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import {
+  buildWebhookUrl,
+  createCheckoutPreference,
   createAutomaticMercadoPagoOrder,
   createMercadoPagoOrderRefund,
+  createMercadoPagoPaymentRefund,
+  extractMercadoPagoPaymentId,
   extractMercadoPagoOrderId,
+  getFrontendUrl,
   getMercadoPagoOrder,
   getMercadoPagoOrderRefundSnapshot,
   getMercadoPagoOrderSnapshot,
+  getMercadoPagoPayment,
+  getMercadoPagoPaymentSnapshot,
   isApprovedMercadoPagoOrder,
+  isApprovedMercadoPagoPayment,
   isCancelledMercadoPagoOrder,
+  isCancelledMercadoPagoPayment,
   isFailedMercadoPagoOrder,
+  isFailedMercadoPagoPayment,
   isPendingMercadoPagoOrder,
+  isPendingMercadoPagoPayment,
   isPartiallyRefundedMercadoPagoOrder,
+  isRefundedMercadoPagoPayment,
   isRefundedMercadoPagoOrder,
   resolveMercadoPagoPayerEmail,
   validateMercadoPagoWebhookSignature,
@@ -42,6 +54,31 @@ function buildReservationExternalReference(reservationId) {
   return `reservation-${reservationId}`;
 }
 
+function buildReservationReturnUrl(reservation, complexId, result = 'pending') {
+  const url = new URL('/portal/pago/mercadopago', `${getFrontendUrl()}/`);
+  url.searchParams.set('entity', 'reservation');
+  url.searchParams.set('id', String(reservation._id));
+  url.searchParams.set('complexId', String(complexId || reservation.complexId || ''));
+  url.searchParams.set('result', String(result || 'pending'));
+  return url.toString();
+}
+
+function buildReservationNotificationUrl(reservation, complex) {
+  const baseUrl = buildWebhookUrl('/api/reservations/webhook/mercadopago');
+  if (!baseUrl) {
+    return '';
+  }
+
+  const url = new URL(baseUrl);
+  url.searchParams.set('reservationId', String(reservation._id));
+
+  if (complex?.ownerId) {
+    url.searchParams.set('ownerId', String(complex.ownerId));
+  }
+
+  return url.toString();
+}
+
 function buildReservationDescription(reservation, court, complex) {
   return `Reserva ${complex?.name || 'Clubes Tucumán'} - ${court?.name || 'Cancha'} - ${reservation.startTime}`;
 }
@@ -52,6 +89,7 @@ function serializeReservationPaymentSession(
   court,
   complex,
   paymentProvider = {},
+  checkout = {},
 ) {
   const payer = resolveMercadoPagoPayerEmail({
     fallbackEmail: user.email,
@@ -60,10 +98,12 @@ function serializeReservationPaymentSession(
 
   return {
     provider: 'mercadopago',
-    checkoutMode: 'orders',
+    checkoutMode: 'checkout_pro',
     providerConfigured: paymentProvider.configured === true,
     publicKey: paymentProvider.publicKey || '',
     reservationId: reservation._id,
+    preferenceId: checkout.preferenceId || reservation.mercadoPagoPreferenceId || '',
+    checkoutUrl: checkout.checkoutUrl || '',
     amount: reservation.totalPrice,
     currency: 'ARS',
     description: buildReservationDescription(reservation, court, complex),
@@ -86,6 +126,16 @@ function applySnapshotToReservation(reservation, snapshot) {
   reservation.mercadoPagoOrderId = snapshot.orderId;
   reservation.mercadoPagoOrderStatus = snapshot.orderStatus;
   reservation.mercadoPagoOrderStatusDetail = snapshot.orderStatusDetail;
+  reservation.mercadoPagoPaymentId = snapshot.paymentId;
+  reservation.mercadoPagoStatus = snapshot.paymentStatus;
+  reservation.mercadoPagoStatusDetail = snapshot.paymentStatusDetail;
+  reservation.mercadoPagoPaymentMethodId = snapshot.paymentMethodId;
+  reservation.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
+}
+
+function applyPaymentSnapshotToReservation(reservation, snapshot) {
+  reservation.mercadoPagoPreferenceId = snapshot.preferenceId || reservation.mercadoPagoPreferenceId || '';
+  reservation.mercadoPagoOrderId = snapshot.paymentOrderId || reservation.mercadoPagoOrderId || '';
   reservation.mercadoPagoPaymentId = snapshot.paymentId;
   reservation.mercadoPagoStatus = snapshot.paymentStatus;
   reservation.mercadoPagoStatusDetail = snapshot.paymentStatusDetail;
@@ -137,6 +187,104 @@ async function syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder
 
   await reservation.save();
   return reservation;
+}
+
+async function syncReservationFromMercadoPagoPayment(reservation, mercadoPagoPayment) {
+  const snapshot = getMercadoPagoPaymentSnapshot(mercadoPagoPayment);
+  applyPaymentSnapshotToReservation(reservation, snapshot);
+
+  if (isApprovedMercadoPagoPayment(mercadoPagoPayment)) {
+    reservation.paymentStatus = 'PAID';
+    reservation.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
+    reservation.refundedAt = null;
+    reservation.refundAmount = 0;
+    if (reservation.status === 'PENDING') {
+      reservation.status = 'CONFIRMED';
+    }
+  } else if (isRefundedMercadoPagoPayment(mercadoPagoPayment)) {
+    reservation.paymentStatus = 'REFUNDED';
+    reservation.status = 'CANCELLED';
+    reservation.refundedAt = new Date();
+    reservation.refundAmount = snapshot.refundedAmount || reservation.totalPrice;
+  } else if (isPendingMercadoPagoPayment(mercadoPagoPayment)) {
+    reservation.paymentStatus = 'UNPAID';
+  } else if (
+    isCancelledMercadoPagoPayment(mercadoPagoPayment) ||
+    isFailedMercadoPagoPayment(mercadoPagoPayment)
+  ) {
+    return cancelUnpaidReservation(reservation);
+  }
+
+  await reservation.save();
+  return reservation;
+}
+
+async function createReservationCheckout(reservation, user, paymentProvider) {
+  const court = reservation.court?.name
+    ? reservation.court
+    : await Court.findById(reservation.court).select('name sport complexId image imageUrl images');
+  const complex = reservation.complexId?.name
+    ? reservation.complexId
+    : await Complex.findById(reservation.complexId).select('name ownerId');
+
+  const payer = resolveMercadoPagoPayerEmail({
+    fallbackEmail: user.email,
+    providerMode: paymentProvider.accountSummary?.mode,
+  });
+
+  const preference = await createCheckoutPreference({
+    externalReference: reservation.externalReference,
+    accessToken: paymentProvider.accessToken,
+    payer: {
+      email: payer.email,
+    },
+    items: [
+      {
+        id: String(reservation._id),
+        title: `${court?.name || 'Cancha'} - ${reservation.startTime}`,
+        description: buildReservationDescription(reservation, court, complex),
+        quantity: 1,
+        currency_id: 'ARS',
+        unit_price: Number(reservation.totalPrice || 0),
+        picture_url: court?.imageUrl || court?.image || court?.images?.[0] || undefined,
+      },
+    ],
+    backUrls: {
+      success: buildReservationReturnUrl(reservation, reservation.complexId?._id || reservation.complexId, 'success'),
+      pending: buildReservationReturnUrl(reservation, reservation.complexId?._id || reservation.complexId, 'pending'),
+      failure: buildReservationReturnUrl(reservation, reservation.complexId?._id || reservation.complexId, 'failure'),
+    },
+    notificationUrl: buildReservationNotificationUrl(reservation, complex),
+    metadata: {
+      entity: 'reservation',
+      reservation_id: String(reservation._id),
+    },
+  });
+
+  reservation.mercadoPagoPreferenceId = String(preference?.id || '');
+  await reservation.save();
+
+  const checkoutUrl =
+    paymentProvider.accountSummary?.mode === 'sandbox'
+      ? String(preference?.sandbox_init_point || preference?.init_point || '')
+      : String(preference?.init_point || preference?.sandbox_init_point || '');
+
+  return {
+    reservation,
+    court,
+    complex,
+    paymentSession: serializeReservationPaymentSession(
+      reservation,
+      user,
+      court,
+      complex,
+      paymentProvider,
+      {
+        preferenceId: reservation.mercadoPagoPreferenceId,
+        checkoutUrl,
+      },
+    ),
+  };
 }
 
 async function loadReservationForPayment(reservationId, dbUser) {
@@ -242,9 +390,29 @@ export const createReservation = async (req, res) => {
       console.error('No se pudo resolver la cuenta de cobro al crear la reserva:', paymentSetupError.message);
     }
 
+    if (paymentProvider.configured === true) {
+      try {
+        const checkout = await createReservationCheckout(saved, user, paymentProvider);
+
+        return res.status(201).json({
+          reservation: checkout.reservation,
+          providerConfigured: true,
+          paymentSession: checkout.paymentSession,
+        });
+      } catch (paymentError) {
+        await cancelUnpaidReservation(saved);
+
+        const error = new Error(
+          `${paymentError.message || 'No se pudo generar el checkout de Mercado Pago.'} La reserva fue cancelada y el horario se libero.`,
+        );
+        error.status = paymentError.status || 400;
+        throw error;
+      }
+    }
+
     res.status(201).json({
       reservation: saved,
-      providerConfigured: paymentProvider.configured === true,
+      providerConfigured: false,
       paymentSession: serializeReservationPaymentSession(saved, user, court, complex, paymentProvider),
     });
   } catch (error) {
@@ -348,9 +516,9 @@ export const refundReservation = async (req, res) => {
 
     await ensureOwnerOwnsComplex(reservation.complexId?._id || reservation.complexId, req.dbUser);
 
-    if (!reservation.mercadoPagoOrderId) {
+    if (!reservation.mercadoPagoOrderId && !reservation.mercadoPagoPaymentId) {
       return res.status(409).json({
-        message: 'Esta reserva no tiene una orden de Mercado Pago asociada para reembolsar.',
+        message: 'Esta reserva no tiene un cobro de Mercado Pago asociado para reembolsar.',
       });
     }
 
@@ -371,17 +539,33 @@ export const refundReservation = async (req, res) => {
       });
     }
 
-    const refundedOrder = await createMercadoPagoOrderRefund({
-      orderId: reservation.mercadoPagoOrderId,
-      accessToken: paymentProvider.accessToken,
-      idempotencyKey: `reservation-refund:${reservation._id}`,
-    });
+    let syncedReservation = reservation;
 
-    let syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, refundedOrder);
+    if (reservation.mercadoPagoPaymentId) {
+      await createMercadoPagoPaymentRefund({
+        paymentId: reservation.mercadoPagoPaymentId,
+        accessToken: paymentProvider.accessToken,
+        idempotencyKey: `reservation-payment-refund:${reservation._id}`,
+      });
 
-    if (syncedReservation.paymentStatus !== 'REFUNDED') {
-      const latestOrder = await getMercadoPagoOrder(reservation.mercadoPagoOrderId, paymentProvider.accessToken);
-      syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, latestOrder);
+      const latestPayment = await getMercadoPagoPayment(
+        reservation.mercadoPagoPaymentId,
+        paymentProvider.accessToken,
+      );
+      syncedReservation = await syncReservationFromMercadoPagoPayment(reservation, latestPayment);
+    } else {
+      const refundedOrder = await createMercadoPagoOrderRefund({
+        orderId: reservation.mercadoPagoOrderId,
+        accessToken: paymentProvider.accessToken,
+        idempotencyKey: `reservation-refund:${reservation._id}`,
+      });
+
+      syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, refundedOrder);
+
+      if (syncedReservation.paymentStatus !== 'REFUNDED') {
+        const latestOrder = await getMercadoPagoOrder(reservation.mercadoPagoOrderId, paymentProvider.accessToken);
+        syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, latestOrder);
+      }
     }
 
     if (syncedReservation.paymentStatus !== 'REFUNDED') {
@@ -427,12 +611,6 @@ export const confirmReservation = async (req, res) => {
 export const processReservationPayment = async (req, res) => {
   try {
     const { id } = req.params;
-    const { formData, additionalData } = req.body;
-
-    if (!formData?.token) {
-      return res.status(400).json({ message: 'formData es requerido para procesar el pago.' });
-    }
-
     const reservation = await loadReservationForPayment(id, req.dbUser);
     await assertComplexClientAccess(reservation.complexId?._id || reservation.complexId, {
       createBillingIfMissing: true,
@@ -445,72 +623,85 @@ export const processReservationPayment = async (req, res) => {
       });
     }
 
-    const payer = resolveMercadoPagoPayerEmail({
-      requestedEmail: formData?.payer?.email,
-      fallbackEmail: req.dbUser.email,
-      providerMode: paymentProvider.accountSummary?.mode,
-    });
-
-    let mercadoPagoOrder;
     try {
-      mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
-        externalReference: reservation.externalReference,
-        totalAmount: reservation.totalPrice,
-        currency: 'ARS',
-        description: buildReservationDescription(reservation, reservation.court, reservation.complexId),
-        payer: {
-          email: payer.email,
-          identification: formData?.payer?.identification || undefined,
-        },
-        formData,
-        additionalData,
-        notificationPath: '/api/reservations/webhook/mercadopago',
-        accessToken: paymentProvider.accessToken,
+      const checkout = await createReservationCheckout(reservation, req.dbUser, paymentProvider);
+
+      return res.json({
+        message: 'Checkout generado correctamente.',
+        reservation: checkout.reservation,
+        paymentSession: checkout.paymentSession,
       });
     } catch (paymentError) {
       await cancelUnpaidReservation(reservation);
 
-      if (payer.requiresTestUser) {
-        const error = new Error(
-          `${paymentError.message || 'Mercado Pago rechazo la operacion.'} La cuenta de cobro esta en modo prueba. Usa un comprador de prueba de Mercado Pago o configura MERCADOPAGO_TEST_PAYER_EMAIL en el backend. La reserva fue cancelada y el horario se libero.`,
-        );
-        error.status = paymentError.status || 400;
-        throw error;
-      }
-
       const error = new Error(
-        `${paymentError.message || 'Mercado Pago rechazo la operacion.'} La reserva fue cancelada y el horario se libero.`,
+        `${paymentError.message || 'No se pudo generar el checkout de Mercado Pago.'} La reserva fue cancelada y el horario se libero.`,
       );
       error.status = paymentError.status || 400;
       throw error;
     }
-
-    const syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder);
-
-    if (syncedReservation.status === 'CANCELLED') {
-      return res.status(409).json({
-        message: 'Mercado Pago rechazo la operacion. La reserva fue cancelada y el horario se libero.',
-        error: 'Mercado Pago rechazo la operacion. La reserva fue cancelada y el horario se libero.',
-        reservation: syncedReservation,
-      });
-    }
-
-    res.json({
-      message: isPendingMercadoPagoOrder(mercadoPagoOrder)
-        ? 'El pago quedo pendiente. La reserva sigue pendiente hasta que Mercado Pago la confirme.'
-        : 'Pago de la reserva procesado correctamente.',
-      reservation: syncedReservation,
-      paymentSession: serializeReservationPaymentSession(
-        syncedReservation,
-        req.dbUser,
-        reservation.court,
-        reservation.complexId,
-        paymentProvider,
-      ),
-    });
   } catch (error) {
     res.status(error.status || 500).json({
       message: error.message || 'Error procesando el pago de la reserva.',
+      error: error.message,
+    });
+  }
+};
+
+export const syncReservationPayment = async (req, res) => {
+  try {
+    const reservation = await Reservation.findById(req.params.id)
+      .populate('court', 'name sport complexId')
+      .populate('complexId', 'name ownerId');
+
+    if (!reservation) {
+      return res.status(404).json({ message: 'Reserva no encontrada.' });
+    }
+
+    if (reservation.user.toString() !== req.dbUser._id.toString()) {
+      return res.status(403).json({ message: 'No autorizado para consultar esta reserva.' });
+    }
+
+    const paymentProvider = await getOwnerPaymentProvider(reservation.complexId.ownerId);
+    if (!paymentProvider.configured) {
+      return res.status(409).json({
+        message: 'La cuenta de cobro del complejo no esta disponible.',
+      });
+    }
+
+    const paymentId = String(
+      req.body?.paymentId ||
+      req.body?.collectionId ||
+      req.query?.payment_id ||
+      req.query?.collection_id ||
+      reservation.mercadoPagoPaymentId ||
+      '',
+    ).trim();
+
+    let syncedReservation = reservation;
+
+    if (paymentId) {
+      const mercadoPagoPayment = await getMercadoPagoPayment(paymentId, paymentProvider.accessToken);
+      syncedReservation = await syncReservationFromMercadoPagoPayment(reservation, mercadoPagoPayment);
+    } else {
+      const resultHint = String(req.body?.result || req.query?.result || '').toLowerCase();
+      if (resultHint === 'failure' && reservation.paymentStatus !== 'PAID') {
+        syncedReservation = await cancelUnpaidReservation(reservation);
+      }
+    }
+
+    res.json({
+      message:
+        syncedReservation.paymentStatus === 'PAID'
+          ? 'Pago acreditado correctamente.'
+          : syncedReservation.status === 'CANCELLED'
+            ? 'La reserva fue cancelada y el horario se libero.'
+            : 'El pago sigue pendiente de confirmacion.',
+      reservation: syncedReservation,
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'No se pudo sincronizar el pago de la reserva.',
       error: error.message,
     });
   }
@@ -520,6 +711,36 @@ export const handleMercadoPagoReservationWebhook = async (req, res) => {
   try {
     if (!validateMercadoPagoWebhookSignature(req)) {
       return res.status(401).json({ received: false, error: 'Firma de webhook invalida.' });
+    }
+
+    if (req.query?.reservationId) {
+      const reservation = await Reservation.findById(req.query.reservationId)
+        .populate('complexId', 'ownerId')
+        .populate('court', 'name');
+
+      if (!reservation) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'reservation_not_found' });
+      }
+
+      const ownerId = req.query?.ownerId || reservation.complexId?.ownerId;
+      const paymentProvider = await getOwnerPaymentProvider(ownerId);
+      if (!paymentProvider.configured) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'payment_account_not_configured' });
+      }
+
+      const paymentId = extractMercadoPagoPaymentId({
+        ...req.body,
+        query: req.query,
+      });
+
+      if (!paymentId) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'payment_id_missing' });
+      }
+
+      const mercadoPagoPayment = await getMercadoPagoPayment(paymentId, paymentProvider.accessToken);
+      const syncedReservation = await syncReservationFromMercadoPagoPayment(reservation, mercadoPagoPayment);
+
+      return res.status(200).json({ received: true, reservation: syncedReservation });
     }
 
     const orderId = extractMercadoPagoOrderId({

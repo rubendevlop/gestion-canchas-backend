@@ -11,6 +11,7 @@ const reservationSchema = new mongoose.Schema({
   status: { type: String, enum: ['PENDING', 'CONFIRMED', 'CANCELLED'], default: 'PENDING' },
   paymentStatus: { type: String, enum: ['UNPAID', 'PARTIAL', 'PAID', 'REFUNDED'], default: 'UNPAID' },
   externalReference: { type: String, default: '', index: true },
+  mercadoPagoPreferenceId: { type: String, default: '', index: true },
   mercadoPagoOrderId: { type: String, default: '', index: true },
   mercadoPagoOrderStatus: { type: String, default: '' },
   mercadoPagoOrderStatusDetail: { type: String, default: '' },

@@ -9,6 +9,7 @@ import {
   handleMercadoPagoReservationWebhook,
   processReservationPayment,
   refundReservation,
+  syncReservationPayment,
 } from '../controllers/reservationController.js';
 import {
   attachDbUser,
@@ -30,6 +31,7 @@ router.post('/', createReservation);
 router.get('/mine', getMyReservations);           // reservas del usuario logueado
 router.get('/taken', getTakenSlots);               // ?courtId=X&date=YYYY-MM-DD
 router.post('/:id/pay', requireRole(['client']), processReservationPayment);
+router.post('/:id/sync-payment', requireRole(['client']), syncReservationPayment);
 router.patch('/:id/cancel', cancelReservation);    // cancelar reserva propia
 router.patch('/:id/confirm', requireRole(['owner', 'superadmin']), confirmReservation);  // confirmar reserva (owner)
 router.post('/:id/refund', requireRole(['owner', 'superadmin']), refundReservation);

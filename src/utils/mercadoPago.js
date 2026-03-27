@@ -81,6 +81,7 @@ function sanitizeMercadoPagoBodyForLog(body) {
   try {
     const parsed = typeof body === 'string' ? JSON.parse(body) : body;
     const payments = Array.isArray(parsed?.transactions?.payments) ? parsed.transactions.payments : [];
+    const items = Array.isArray(parsed?.items) ? parsed.items : [];
 
     return {
       type: parsed?.type,
@@ -92,6 +93,21 @@ function sanitizeMercadoPagoBodyForLog(body) {
         hasEmail: Boolean(parsed?.payer?.email),
         hasIdentification: Boolean(parsed?.payer?.identification),
       },
+      items: items.map((item) => ({
+        id: item?.id || '',
+        title: item?.title || '',
+        quantity: item?.quantity || 0,
+        currency_id: item?.currency_id || '',
+        unit_price: item?.unit_price || 0,
+      })),
+      back_urls: parsed?.back_urls
+        ? {
+            hasSuccess: Boolean(parsed?.back_urls?.success),
+            hasPending: Boolean(parsed?.back_urls?.pending),
+            hasFailure: Boolean(parsed?.back_urls?.failure),
+          }
+        : undefined,
+      hasNotificationUrl: Boolean(parsed?.notification_url),
       transactions: {
         payments: payments.map((payment) => ({
           amount: payment?.amount,
@@ -257,6 +273,81 @@ export function buildWebhookUrl(pathname) {
   return `${backendUrl}${pathname.startsWith('/') ? pathname : `/${pathname}`}`;
 }
 
+function normalizePreferenceItem(item = {}, index = 0) {
+  const quantity = Math.max(1, Number(item.quantity) || 1);
+  const unitPrice = Number(item.unit_price ?? item.unitPrice ?? 0);
+
+  return {
+    id: String(item.id || `item-${index + 1}`),
+    title: String(item.title || `Item ${index + 1}`).trim(),
+    ...(item.description ? { description: String(item.description).trim() } : {}),
+    ...(item.picture_url ? { picture_url: String(item.picture_url).trim() } : {}),
+    quantity,
+    currency_id: String(item.currency_id || item.currencyId || 'ARS').trim() || 'ARS',
+    unit_price: Number.isFinite(unitPrice) ? unitPrice : 0,
+  };
+}
+
+export async function createCheckoutPreference({
+  externalReference,
+  items = [],
+  payer = {},
+  backUrls = {},
+  notificationUrl = '',
+  accessToken = '',
+  metadata = undefined,
+  statementDescriptor = '',
+} = {}) {
+  const normalizedReference = normalizeExternalReference(externalReference);
+  const normalizedIdentification = normalizePayerIdentification(payer.identification);
+  const normalizedItems = Array.isArray(items)
+    ? items.map((item, index) => normalizePreferenceItem(item, index)).filter((item) => item.unit_price >= 0)
+    : [];
+
+  if (normalizedItems.length === 0) {
+    throw new Error('Mercado Pago requiere al menos un item para generar el checkout.');
+  }
+
+  const payload = {
+    external_reference: normalizedReference,
+    items: normalizedItems,
+    payer: {
+      email: String(payer.email || '').trim(),
+      ...(normalizedIdentification ? { identification: normalizedIdentification } : {}),
+    },
+    back_urls: {
+      success: String(backUrls.success || '').trim(),
+      pending: String(backUrls.pending || '').trim(),
+      failure: String(backUrls.failure || '').trim(),
+    },
+    auto_return: 'approved',
+  };
+
+  if (notificationUrl && isPublicHttpUrl(notificationUrl)) {
+    payload.notification_url = notificationUrl;
+  }
+
+  if (metadata && typeof metadata === 'object') {
+    payload.metadata = metadata;
+  }
+
+  if (statementDescriptor && String(statementDescriptor).trim()) {
+    payload.statement_descriptor = String(statementDescriptor).trim();
+  }
+
+  return mercadopagoRequest(
+    '/checkout/preferences/',
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    {
+      idempotencyKey: `preference-${normalizedReference}`,
+      accessToken,
+    },
+  );
+}
+
 export async function createAutomaticMercadoPagoOrder({
   externalReference,
   totalAmount,
@@ -337,8 +428,36 @@ export async function createMercadoPagoOrderRefund({
   );
 }
 
+export async function createMercadoPagoPaymentRefund({
+  paymentId,
+  amount,
+  accessToken = '',
+  idempotencyKey = '',
+}) {
+  const payload = {};
+  if (typeof amount === 'number' && Number.isFinite(amount) && amount > 0) {
+    payload.amount = Number(amount.toFixed(2));
+  }
+
+  return mercadopagoRequest(
+    `/v1/payments/${paymentId}/refunds`,
+    {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    },
+    {
+      idempotencyKey: idempotencyKey || `payment-refund:${paymentId}`,
+      accessToken,
+    },
+  );
+}
+
 export async function getMercadoPagoOrder(orderId, accessToken = '') {
   return mercadopagoRequest(`/v1/orders/${orderId}`, {}, { accessToken });
+}
+
+export async function getMercadoPagoPayment(paymentId, accessToken = '') {
+  return mercadopagoRequest(`/v1/payments/${paymentId}`, {}, { accessToken });
 }
 
 export function getPrimaryOrderPayment(order = {}) {
@@ -454,6 +573,57 @@ export function isFailedMercadoPagoOrder(order = {}) {
   return Boolean(normalizedStatus || normalizedDetail);
 }
 
+export function getMercadoPagoPaymentSnapshot(payment = {}) {
+  return {
+    paymentId: payment?.id ? String(payment.id) : '',
+    paymentStatus: String(payment?.status || ''),
+    paymentStatusDetail: String(payment?.status_detail || ''),
+    paymentMethodId: String(payment?.payment_method_id || payment?.payment_method?.id || ''),
+    paymentMethodType: String(payment?.payment_type_id || payment?.payment_method?.type || ''),
+    paymentOrderId: payment?.order?.id ? String(payment.order.id) : '',
+    approvedAt: payment?.date_approved || payment?.date_last_updated || payment?.date_created || null,
+    externalReference: String(payment?.external_reference || ''),
+    amount: Number(payment?.transaction_amount ?? 0) || 0,
+    refundedAmount: Number(payment?.transaction_amount_refunded ?? 0) || 0,
+    preferenceId: String(payment?.metadata?.preference_id || ''),
+  };
+}
+
+export function isApprovedMercadoPagoPayment(payment = {}) {
+  return String(payment?.status || '').toLowerCase() === 'approved';
+}
+
+export function isPendingMercadoPagoPayment(payment = {}) {
+  return ['pending', 'in_process', 'in_mediation', 'authorized'].includes(
+    String(payment?.status || '').toLowerCase(),
+  );
+}
+
+export function isCancelledMercadoPagoPayment(payment = {}) {
+  return ['cancelled', 'cancelled_by_collector', 'cancelled_by_payer'].includes(
+    String(payment?.status || '').toLowerCase(),
+  );
+}
+
+export function isRefundedMercadoPagoPayment(payment = {}) {
+  const snapshot = getMercadoPagoPaymentSnapshot(payment);
+  const status = snapshot.paymentStatus.toLowerCase();
+  return status === 'refunded' || snapshot.refundedAmount >= snapshot.amount;
+}
+
+export function isFailedMercadoPagoPayment(payment = {}) {
+  if (
+    isApprovedMercadoPagoPayment(payment) ||
+    isPendingMercadoPagoPayment(payment) ||
+    isCancelledMercadoPagoPayment(payment) ||
+    isRefundedMercadoPagoPayment(payment)
+  ) {
+    return false;
+  }
+
+  return Boolean(String(payment?.status || '').trim());
+}
+
 function parseSignatureHeader(value = '') {
   return String(value)
     .split(',')
@@ -507,6 +677,19 @@ export function extractMercadoPagoOrderId(payload = {}) {
     payload?.resource?.split('/').pop() ||
     payload?.query?.id ||
     payload?.query?.['data.id'] ||
+    null
+  );
+}
+
+export function extractMercadoPagoPaymentId(payload = {}) {
+  return (
+    payload?.data?.id ||
+    payload?.id ||
+    payload?.resource?.split('/').pop() ||
+    payload?.query?.id ||
+    payload?.query?.['data.id'] ||
+    payload?.query?.payment_id ||
+    payload?.query?.collection_id ||
     null
   );
 }

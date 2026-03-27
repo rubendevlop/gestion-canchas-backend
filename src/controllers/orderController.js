@@ -1,20 +1,29 @@
 import Complex from '../models/Complex.js';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
-import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
+import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 import {
   assertComplexClientAccess,
 } from '../utils/ownerBilling.js';
 import {
-  createAutomaticMercadoPagoOrder,
+  buildWebhookUrl,
+  createCheckoutPreference,
+  extractMercadoPagoPaymentId,
   extractMercadoPagoOrderId,
+  getFrontendUrl,
   getMercadoPagoOrder,
   getMercadoPagoOrderSnapshot,
+  getMercadoPagoPayment,
+  getMercadoPagoPaymentSnapshot,
   isApprovedMercadoPagoOrder,
+  isApprovedMercadoPagoPayment,
   isCancelledMercadoPagoOrder,
+  isCancelledMercadoPagoPayment,
   isFailedMercadoPagoOrder,
+  isFailedMercadoPagoPayment,
   isPendingMercadoPagoOrder,
+  isPendingMercadoPagoPayment,
   resolveMercadoPagoPayerEmail,
 } from '../utils/mercadoPago.js';
 
@@ -22,11 +31,36 @@ function buildExternalReference(orderId) {
   return `store-order-${orderId}`;
 }
 
+function buildOrderReturnUrl(order, complexId, result = 'pending') {
+  const url = new URL('/portal/pago/mercadopago', `${getFrontendUrl()}/`);
+  url.searchParams.set('entity', 'order');
+  url.searchParams.set('id', String(order._id));
+  url.searchParams.set('complexId', String(complexId || order.complexId || ''));
+  url.searchParams.set('result', String(result || 'pending'));
+  return url.toString();
+}
+
+function buildOrderNotificationUrl(order, complex) {
+  const baseUrl = buildWebhookUrl('/api/orders/webhook/mercadopago');
+  if (!baseUrl) {
+    return '';
+  }
+
+  const url = new URL(baseUrl);
+  url.searchParams.set('orderId', String(order._id));
+
+  if (complex?.ownerId) {
+    url.searchParams.set('ownerId', String(complex.ownerId));
+  }
+
+  return url.toString();
+}
+
 function buildOrderDescription(order, complex) {
   return `Pedido tienda ${complex?.name || 'Clubes Tucumán'} #${String(order._id).slice(-6).toUpperCase()}`;
 }
 
-function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}) {
+function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}, checkout = {}) {
   const payer = resolveMercadoPagoPayerEmail({
     fallbackEmail: user.email,
     providerMode: paymentProvider.accountSummary?.mode,
@@ -34,10 +68,12 @@ function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}
 
   return {
     provider: 'mercadopago',
-    checkoutMode: 'orders',
+    checkoutMode: 'checkout_pro',
     providerConfigured: paymentProvider.configured === true,
     publicKey: paymentProvider.publicKey || '',
     orderId: order._id,
+    preferenceId: checkout.preferenceId || order.mercadoPagoPreferenceId || '',
+    checkoutUrl: checkout.checkoutUrl || '',
     amount: order.totalAmount,
     currency: 'ARS',
     description: buildOrderDescription(order, complex),
@@ -67,6 +103,16 @@ function applySnapshotToOrder(order, snapshot) {
   order.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
 }
 
+function applyPaymentSnapshotToOrder(order, snapshot) {
+  order.mercadoPagoPreferenceId = snapshot.preferenceId || order.mercadoPagoPreferenceId || '';
+  order.mercadoPagoOrderId = snapshot.paymentOrderId || order.mercadoPagoOrderId || '';
+  order.mercadoPagoPaymentId = snapshot.paymentId;
+  order.mercadoPagoStatus = snapshot.paymentStatus;
+  order.mercadoPagoStatusDetail = snapshot.paymentStatusDetail;
+  order.mercadoPagoPaymentMethodId = snapshot.paymentMethodId;
+  order.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
+}
+
 async function syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder) {
   const snapshot = getMercadoPagoOrderSnapshot(mercadoPagoOrder);
   applySnapshotToOrder(localOrder, snapshot);
@@ -84,6 +130,80 @@ async function syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder) 
 
   await localOrder.save();
   return localOrder;
+}
+
+async function syncLocalOrderFromMercadoPagoPayment(localOrder, mercadoPagoPayment) {
+  const snapshot = getMercadoPagoPaymentSnapshot(mercadoPagoPayment);
+  applyPaymentSnapshotToOrder(localOrder, snapshot);
+
+  if (isApprovedMercadoPagoPayment(mercadoPagoPayment)) {
+    localOrder.status = 'completed';
+    localOrder.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
+  } else if (isPendingMercadoPagoPayment(mercadoPagoPayment)) {
+    localOrder.status = 'pending';
+  } else if (isCancelledMercadoPagoPayment(mercadoPagoPayment)) {
+    localOrder.status = 'cancelled';
+  } else if (isFailedMercadoPagoPayment(mercadoPagoPayment)) {
+    localOrder.status = 'failed';
+  }
+
+  await localOrder.save();
+  return localOrder;
+}
+
+async function createOrderCheckout(localOrder, user, complex, paymentProvider, productsById = new Map()) {
+  const payer = resolveMercadoPagoPayerEmail({
+    fallbackEmail: user.email,
+    providerMode: paymentProvider.accountSummary?.mode,
+  });
+
+  const items = localOrder.items.map((item) => {
+    const product = productsById.get(String(item.productId));
+    return {
+      id: String(item.productId),
+      title: product?.name || 'Producto',
+      description: buildOrderDescription(localOrder, complex),
+      quantity: Number(item.quantity || 1),
+      currency_id: 'ARS',
+      unit_price: Number(item.price || 0),
+      picture_url: product?.imageUrl || product?.image || product?.images?.[0] || undefined,
+    };
+  });
+
+  const preference = await createCheckoutPreference({
+    externalReference: localOrder.externalReference,
+    accessToken: paymentProvider.accessToken,
+    payer: {
+      email: payer.email,
+    },
+    items,
+    backUrls: {
+      success: buildOrderReturnUrl(localOrder, localOrder.complexId?._id || localOrder.complexId, 'success'),
+      pending: buildOrderReturnUrl(localOrder, localOrder.complexId?._id || localOrder.complexId, 'pending'),
+      failure: buildOrderReturnUrl(localOrder, localOrder.complexId?._id || localOrder.complexId, 'failure'),
+    },
+    notificationUrl: buildOrderNotificationUrl(localOrder, complex),
+    metadata: {
+      entity: 'order',
+      order_id: String(localOrder._id),
+    },
+  });
+
+  localOrder.mercadoPagoPreferenceId = String(preference?.id || '');
+  await localOrder.save();
+
+  const checkoutUrl =
+    paymentProvider.accountSummary?.mode === 'sandbox'
+      ? String(preference?.sandbox_init_point || preference?.init_point || '')
+      : String(preference?.init_point || preference?.sandbox_init_point || '');
+
+  return {
+    order: localOrder,
+    paymentSession: serializeOrderPaymentSession(localOrder, user, complex, paymentProvider, {
+      preferenceId: localOrder.mercadoPagoPreferenceId,
+      checkoutUrl,
+    }),
+  };
 }
 
 async function loadOrderForUser(orderId, dbUser) {
@@ -182,10 +302,18 @@ export const createOrder = async (req, res) => {
     newOrder.externalReference = buildExternalReference(newOrder._id.toString());
     await newOrder.save();
 
+    const checkout = await createOrderCheckout(
+      newOrder,
+      req.dbUser,
+      complex,
+      paymentProvider,
+      productsById,
+    );
+
     res.status(201).json({
-      order: newOrder,
+      order: checkout.order,
       message: 'Pedido creado con exito. Falta completar el pago.',
-      paymentSession: serializeOrderPaymentSession(newOrder, req.dbUser, complex, paymentProvider),
+      paymentSession: checkout.paymentSession,
       providerConfigured: paymentProvider.configured === true,
     });
   } catch (error) {
@@ -198,14 +326,7 @@ export const createOrder = async (req, res) => {
 
 export const processOrderPayment = async (req, res) => {
   try {
-    const { id } = req.params;
-    const { formData, additionalData } = req.body;
-
-    if (!formData?.token) {
-      return res.status(400).json({ error: 'formData es requerido para procesar el pago.' });
-    }
-
-    const localOrder = await loadOrderForUser(id, req.dbUser);
+    const localOrder = await loadOrderForUser(req.params.id, req.dbUser);
     await assertComplexClientAccess(localOrder.complexId?._id || localOrder.complexId, { createBillingIfMissing: true });
     const paymentProvider = await getOwnerPaymentProvider(localOrder.complexId.ownerId);
 
@@ -215,51 +336,15 @@ export const processOrderPayment = async (req, res) => {
       });
     }
 
-    const payer = resolveMercadoPagoPayerEmail({
-      requestedEmail: formData?.payer?.email,
-      fallbackEmail: req.dbUser.email,
-      providerMode: paymentProvider.accountSummary?.mode,
-    });
-
-    let mercadoPagoOrder;
-    try {
-      mercadoPagoOrder = await createAutomaticMercadoPagoOrder({
-        externalReference: localOrder.externalReference,
-        totalAmount: localOrder.totalAmount,
-        currency: 'ARS',
-        description: buildOrderDescription(localOrder, localOrder.complexId),
-        payer: {
-          email: payer.email,
-          identification: formData?.payer?.identification || undefined,
-        },
-        formData,
-        additionalData,
-        notificationPath: '/api/orders/webhook/mercadopago',
-        accessToken: paymentProvider.accessToken,
-      });
-    } catch (paymentError) {
-      if (payer.requiresTestUser) {
-        const error = new Error(
-          `${paymentError.message || 'Mercado Pago rechazo la operacion.'} La cuenta de cobro esta en modo prueba. Usa un comprador de prueba de Mercado Pago o configura MERCADOPAGO_TEST_PAYER_EMAIL en el backend.`,
-        );
-        error.status = paymentError.status || 400;
-        throw error;
-      }
-
-      throw paymentError;
-    }
-
-    const syncedOrder = await syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder);
+    const productIds = localOrder.items.map((item) => item.productId).filter(Boolean);
+    const products = await Product.find({ _id: { $in: productIds } }).lean();
+    const productsById = new Map(products.map((product) => [String(product._id), product]));
+    const checkout = await createOrderCheckout(localOrder, req.dbUser, localOrder.complexId, paymentProvider, productsById);
 
     res.json({
-      message: 'Pago del pedido procesado correctamente.',
-      order: syncedOrder,
-      paymentSession: serializeOrderPaymentSession(
-        syncedOrder,
-        req.dbUser,
-        localOrder.complexId,
-        paymentProvider,
-      ),
+      message: 'Checkout generado correctamente.',
+      order: checkout.order,
+      paymentSession: checkout.paymentSession,
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -269,10 +354,88 @@ export const processOrderPayment = async (req, res) => {
   }
 };
 
+export const syncOrderPayment = async (req, res) => {
+  try {
+    const localOrder = await loadOrderForUser(req.params.id, req.dbUser);
+    const paymentProvider = await getOwnerPaymentProvider(localOrder.complexId.ownerId);
+
+    if (!paymentProvider.configured) {
+      return res.status(409).json({
+        error: 'La cuenta de cobro del complejo no esta disponible.',
+      });
+    }
+
+    const paymentId = String(
+      req.body?.paymentId ||
+      req.body?.collectionId ||
+      req.query?.payment_id ||
+      req.query?.collection_id ||
+      localOrder.mercadoPagoPaymentId ||
+      '',
+    ).trim();
+
+    let syncedOrder = localOrder;
+
+    if (paymentId) {
+      const mercadoPagoPayment = await getMercadoPagoPayment(paymentId, paymentProvider.accessToken);
+      syncedOrder = await syncLocalOrderFromMercadoPagoPayment(localOrder, mercadoPagoPayment);
+    } else {
+      const resultHint = String(req.body?.result || req.query?.result || '').toLowerCase();
+      if (resultHint === 'failure' && syncedOrder.status !== 'completed') {
+        syncedOrder.status = 'cancelled';
+        await syncedOrder.save();
+      }
+    }
+
+    res.json({
+      message:
+        syncedOrder.status === 'completed'
+          ? 'Pago acreditado correctamente.'
+          : syncedOrder.status === 'cancelled'
+            ? 'El pedido fue cancelado.'
+            : 'El pago sigue pendiente de confirmacion.',
+      order: syncedOrder,
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'No se pudo sincronizar el pago del pedido',
+      detail: error.message,
+    });
+  }
+};
+
 export const handleMercadoPagoOrderWebhook = async (req, res) => {
   try {
     if (!validateMercadoPagoWebhookSignature(req)) {
       return res.status(401).json({ received: false, error: 'Firma de webhook invalida.' });
+    }
+
+    if (req.query?.orderId) {
+      const localOrder = await Order.findById(req.query.orderId).populate('complexId', 'ownerId');
+
+      if (!localOrder) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'order_not_found' });
+      }
+
+      const ownerId = req.query?.ownerId || localOrder.complexId?.ownerId;
+      const paymentProvider = await getOwnerPaymentProvider(ownerId);
+      if (!paymentProvider.configured) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'payment_account_not_configured' });
+      }
+
+      const paymentId = extractMercadoPagoPaymentId({
+        ...req.body,
+        query: req.query,
+      });
+
+      if (!paymentId) {
+        return res.status(200).json({ received: true, ignored: true, reason: 'payment_id_missing' });
+      }
+
+      const mercadoPagoPayment = await getMercadoPagoPayment(paymentId, paymentProvider.accessToken);
+      const syncedOrder = await syncLocalOrderFromMercadoPagoPayment(localOrder, mercadoPagoPayment);
+
+      return res.status(200).json({ received: true, order: syncedOrder });
     }
 
     const orderId = extractMercadoPagoOrderId({
