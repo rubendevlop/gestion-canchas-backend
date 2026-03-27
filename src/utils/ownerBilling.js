@@ -2,6 +2,10 @@ import Complex from '../models/Complex.js';
 import OwnerBilling from '../models/OwnerBilling.js';
 import User from '../models/User.js';
 import {
+  sendAdminOwnerBillingPaidEmail,
+  sendOwnerBillingPaidEmail,
+} from './emailNotifications.js';
+import {
   createAutomaticMercadoPagoOrder,
   extractMercadoPagoOrderId,
   getMercadoPagoPublicKey,
@@ -237,6 +241,42 @@ async function markInvoiceAsPaid(invoice, approvedAt) {
   invoice.accessEndsAt = addMonths(accessStart, getBillingMonths());
 }
 
+export async function maybeSendOwnerBillingPaidNotifications(invoice, ownerOverride = null) {
+  if (!invoice || invoice.status !== 'PAID') {
+    return;
+  }
+
+  const owner =
+    ownerOverride ||
+    (invoice.ownerId?.email ? invoice.ownerId : await User.findById(invoice.ownerId).select('displayName email'));
+
+  if (!owner?.email) {
+    return;
+  }
+
+  let shouldSave = false;
+
+  if (!invoice.ownerNotificationSentAt) {
+    const ownerResult = await sendOwnerBillingPaidEmail({ invoice, owner });
+    if (ownerResult?.sent) {
+      invoice.ownerNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (!invoice.adminNotificationSentAt) {
+    const adminResult = await sendAdminOwnerBillingPaidEmail({ invoice, owner });
+    if (adminResult?.sent) {
+      invoice.adminNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
+    await invoice.save();
+  }
+}
+
 async function syncInvoiceFromMercadoPagoOrder(invoice, order) {
   const snapshot = getMercadoPagoOrderSnapshot(order);
   applySnapshotToInvoice(invoice, snapshot);
@@ -257,6 +297,7 @@ async function syncInvoiceFromMercadoPagoOrder(invoice, order) {
   }
 
   await invoice.save();
+  await maybeSendOwnerBillingPaidNotifications(invoice);
   return invoice;
 }
 

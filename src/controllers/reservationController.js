@@ -1,7 +1,10 @@
 import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Reservation from '../models/Reservation.js';
-import { sendReservationPaidEmail } from '../utils/emailNotifications.js';
+import {
+  sendReservationOwnerPaidEmail,
+  sendReservationPaidEmail,
+} from '../utils/emailNotifications.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import {
   buildWebhookUrl,
@@ -157,31 +160,57 @@ async function cancelUnpaidReservation(reservation) {
 }
 
 async function maybeSendReservationConfirmationEmail(reservation) {
-  if (!reservation || reservation.paymentStatus !== 'PAID' || reservation.confirmationEmailSentAt) {
+  if (!reservation || reservation.paymentStatus !== 'PAID') {
     return;
   }
 
   const hydratedReservation =
-    reservation.user?.email && reservation.court?.name && reservation.complexId?.name
+    reservation.user?.email &&
+    reservation.court?.name &&
+    reservation.complexId?.name &&
+    reservation.complexId?.ownerId?.email
       ? reservation
       : await Reservation.findById(reservation._id)
           .populate('user', 'displayName email')
           .populate('court', 'name sport')
-          .populate('complexId', 'name');
+          .populate('complexId', 'name ownerId');
 
-  if (!hydratedReservation?.user?.email) {
+  if (!hydratedReservation) {
     return;
   }
 
-  const result = await sendReservationPaidEmail({
-    reservation: hydratedReservation,
-    user: hydratedReservation.user,
-    court: hydratedReservation.court,
-    complex: hydratedReservation.complexId,
-  });
+  let shouldSave = false;
 
-  if (result?.sent) {
-    reservation.confirmationEmailSentAt = new Date();
+  if (!reservation.confirmationEmailSentAt && hydratedReservation.user?.email) {
+    const clientResult = await sendReservationPaidEmail({
+      reservation: hydratedReservation,
+      user: hydratedReservation.user,
+      court: hydratedReservation.court,
+      complex: hydratedReservation.complexId,
+    });
+
+    if (clientResult?.sent) {
+      reservation.confirmationEmailSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (!reservation.ownerNotificationSentAt && hydratedReservation.complexId?.ownerId?.email) {
+    const ownerResult = await sendReservationOwnerPaidEmail({
+      reservation: hydratedReservation,
+      owner: hydratedReservation.complexId.ownerId,
+      user: hydratedReservation.user,
+      court: hydratedReservation.court,
+      complex: hydratedReservation.complexId,
+    });
+
+    if (ownerResult?.sent) {
+      reservation.ownerNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
     await reservation.save();
   }
 }

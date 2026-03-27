@@ -1,5 +1,9 @@
 import { sendEmailSafe } from './mailer.js';
 
+function normalizeString(value = '') {
+  return String(value || '').trim();
+}
+
 function formatMoney(value) {
   return `$${Number(value || 0).toLocaleString('es-AR')}`;
 }
@@ -35,6 +39,27 @@ function wrapEmail(title, bodyLines = []) {
   `;
 }
 
+function getAdminNotificationRecipients() {
+  return normalizeString(process.env.ADMIN_NOTIFY_EMAIL)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+export async function sendAdminNotification({ subject, text, html }) {
+  const recipients = getAdminNotificationRecipients();
+  if (recipients.length === 0) {
+    return { sent: false, skipped: true, reason: 'missing_admin_notify_email' };
+  }
+
+  return sendEmailSafe({
+    to: recipients.join(', '),
+    subject,
+    text,
+    html,
+  });
+}
+
 export async function sendWelcomeEmail(user) {
   if (!user?.email) return { sent: false, skipped: true, reason: 'missing_email' };
 
@@ -46,6 +71,40 @@ export async function sendWelcomeEmail(user) {
     html: wrapEmail('Bienvenido a Clubes Tucuman', [
       `Hola <strong>${displayName}</strong>.`,
       'Tu cuenta ya esta lista para reservar canchas, comprar productos y seguir tu actividad desde el portal.',
+    ]),
+  });
+}
+
+export async function sendOwnerApplicationPendingEmail(user) {
+  if (!user?.email) return { sent: false, skipped: true, reason: 'missing_email' };
+
+  const application = user.ownerApplication || {};
+  return sendEmailSafe({
+    to: user.email,
+    subject: 'Recibimos tu solicitud como owner',
+    text: `Recibimos tu solicitud para ${application.complexName || 'tu complejo'} y ahora esta pendiente de revision.`,
+    html: wrapEmail('Recibimos tu solicitud como owner', [
+      `Tu solicitud para operar <strong>${application.complexName || 'tu complejo'}</strong> fue recibida correctamente.`,
+      'Nuestro equipo la revisara y te avisaremos por correo cuando quede aprobada.',
+      `Ciudad declarada: <strong>${application.city || '-'}</strong>.`,
+      `Contacto: <strong>${application.contactPhone || user.phone || user.email}</strong>.`,
+    ]),
+  });
+}
+
+export async function sendAdminOwnerApplicationEmail(user) {
+  const application = user?.ownerApplication || {};
+
+  return sendAdminNotification({
+    subject: 'Nueva solicitud de owner',
+    text: `Nueva solicitud owner: ${user?.displayName || user?.email} - ${application.complexName || 'Sin complejo'}.`,
+    html: wrapEmail('Nueva solicitud de owner', [
+      `Se registro una nueva solicitud owner de <strong>${user?.displayName || user?.email || 'Usuario'}</strong>.`,
+      `Complejo: <strong>${application.complexName || '-'}</strong>.`,
+      `Documento: <strong>${application.documentType || '-'} ${application.documentNumber || ''}</strong>.`,
+      `Telefono: <strong>${application.contactPhone || '-'}</strong>.`,
+      `Ciudad: <strong>${application.city || '-'}</strong>.`,
+      `Canchas declaradas: <strong>${application.courtsCount || 0}</strong>.`,
     ]),
   });
 }
@@ -91,6 +150,24 @@ export async function sendReservationPaidEmail({ reservation, user, court, compl
   });
 }
 
+export async function sendReservationOwnerPaidEmail({ reservation, owner, user, court, complex }) {
+  if (!owner?.email || !reservation) return { sent: false, skipped: true, reason: 'missing_data' };
+
+  return sendEmailSafe({
+    to: owner.email,
+    subject: 'Recibiste un pago por reserva',
+    text: `Se acredito una reserva en ${complex?.name || 'tu complejo'} por ${formatMoney(reservation.totalPrice)}.`,
+    html: wrapEmail('Recibiste un pago por reserva', [
+      `Se acredito una reserva en <strong>${complex?.name || 'tu complejo'}</strong>.`,
+      `Cliente: <strong>${user?.displayName || user?.email || 'Cliente'}</strong>.`,
+      `Cancha: <strong>${court?.name || 'Cancha'}</strong>.`,
+      `Fecha: <strong>${formatDate(reservation.date)}</strong>.`,
+      `Horario: <strong>${reservation.startTime} a ${reservation.endTime}</strong>.`,
+      `Importe: <strong>${formatMoney(reservation.totalPrice)}</strong>.`,
+    ]),
+  });
+}
+
 export async function sendOrderPaidEmail({ order, user, complex }) {
   if (!user?.email || !order) return { sent: false, skipped: true, reason: 'missing_data' };
 
@@ -109,5 +186,53 @@ export async function sendOrderPaidEmail({ order, user, complex }) {
       `Total abonado: <strong>${formatMoney(order.totalAmount)}</strong>.`,
       `Fecha: <strong>${formatDate(order.paidAt || order.createdAt)}</strong>.`,
     ].filter(Boolean)),
+  });
+}
+
+export async function sendOrderOwnerPaidEmail({ order, owner, user, complex }) {
+  if (!owner?.email || !order) return { sent: false, skipped: true, reason: 'missing_data' };
+
+  const items = Array.isArray(order.items) ? order.items : [];
+  const summary = items
+    .map((item) => `${item.productId?.name || 'Producto'} x${Number(item.quantity || 1)}`)
+    .join(', ');
+
+  return sendEmailSafe({
+    to: owner.email,
+    subject: 'Recibiste un pago en tu tienda',
+    text: `Se acredito una compra en ${complex?.name || 'tu tienda'} por ${formatMoney(order.totalAmount)}.`,
+    html: wrapEmail('Recibiste un pago en tu tienda', [
+      `Se acredito un pedido en <strong>${complex?.name || 'tu tienda'}</strong>.`,
+      `Cliente: <strong>${user?.displayName || user?.email || 'Cliente'}</strong>.`,
+      summary ? `Detalle: <strong>${summary}</strong>.` : '',
+      `Importe total: <strong>${formatMoney(order.totalAmount)}</strong>.`,
+    ].filter(Boolean)),
+  });
+}
+
+export async function sendOwnerBillingPaidEmail({ invoice, owner }) {
+  if (!owner?.email || !invoice) return { sent: false, skipped: true, reason: 'missing_data' };
+
+  return sendEmailSafe({
+    to: owner.email,
+    subject: 'Mensualidad acreditada',
+    text: `Tu mensualidad fue acreditada correctamente. Acceso habilitado hasta ${formatDate(invoice.accessEndsAt)}.`,
+    html: wrapEmail('Mensualidad acreditada', [
+      'Tu pago mensual fue acreditado correctamente.',
+      `Importe: <strong>${formatMoney(invoice.amount)}</strong>.`,
+      `Acceso habilitado hasta: <strong>${formatDate(invoice.accessEndsAt)}</strong>.`,
+    ]),
+  });
+}
+
+export async function sendAdminOwnerBillingPaidEmail({ invoice, owner }) {
+  return sendAdminNotification({
+    subject: 'Se acredito una mensualidad owner',
+    text: `Mensualidad acreditada de ${owner?.displayName || owner?.email || 'owner'} por ${formatMoney(invoice?.amount)}.`,
+    html: wrapEmail('Se acredito una mensualidad owner', [
+      `Owner: <strong>${owner?.displayName || owner?.email || 'Owner'}</strong>.`,
+      `Importe: <strong>${formatMoney(invoice?.amount)}</strong>.`,
+      `Acceso hasta: <strong>${formatDate(invoice?.accessEndsAt)}</strong>.`,
+    ]),
   });
 }

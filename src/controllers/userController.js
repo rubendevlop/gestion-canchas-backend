@@ -3,7 +3,12 @@ import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Order from '../models/Order.js';
 import Reservation from '../models/Reservation.js';
-import { sendOwnerStatusEmail, sendWelcomeEmail } from '../utils/emailNotifications.js';
+import {
+  sendAdminOwnerApplicationEmail,
+  sendOwnerApplicationPendingEmail,
+  sendOwnerStatusEmail,
+  sendWelcomeEmail,
+} from '../utils/emailNotifications.js';
 import { getOwnerBillingState } from '../utils/ownerBilling.js';
 import { resolveDbUser } from '../utils/resolveDbUser.js';
 
@@ -12,6 +17,113 @@ function normalizePhone(value = '') {
     .trim()
     .replace(/\s+/g, ' ')
     .slice(0, 40);
+}
+
+function normalizeDisplayName(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 80);
+}
+
+function normalizeEmail(value = '') {
+  return String(value || '')
+    .trim()
+    .toLowerCase();
+}
+
+function isValidArgentinaPhone(value = '') {
+  const digits = String(value || '').replace(/\D/g, '');
+  if (!digits) {
+    return false;
+  }
+
+  let normalized = digits;
+  if (normalized.startsWith('549')) {
+    normalized = normalized.slice(3);
+  } else if (normalized.startsWith('54')) {
+    normalized = normalized.slice(2);
+  } else if (normalized.startsWith('0')) {
+    normalized = normalized.slice(1);
+  }
+
+  return normalized.length >= 10 && normalized.length <= 11;
+}
+
+function normalizeOwnerApplication(input = {}) {
+  return {
+    fullName: String(input.fullName || '').trim().slice(0, 120),
+    contactPhone: normalizePhone(input.contactPhone),
+    documentType: String(input.documentType || '').trim().slice(0, 20),
+    documentNumber: String(input.documentNumber || '').trim().slice(0, 40),
+    complexName: String(input.complexName || '').trim().slice(0, 120),
+    complexAddress: String(input.complexAddress || '').trim().slice(0, 180),
+    city: String(input.city || '').trim().slice(0, 80),
+    courtsCount: Math.max(1, Number(input.courtsCount) || 0),
+    sportsOffered: String(input.sportsOffered || '').trim().slice(0, 120),
+    websiteOrInstagram: String(input.websiteOrInstagram || '').trim().slice(0, 180),
+    notes: String(input.notes || '').trim().slice(0, 500),
+    submittedAt: new Date(),
+  };
+}
+
+function validateOwnerApplication(application) {
+  const requiredFields = [
+    ['fullName', 'El nombre del responsable es obligatorio.'],
+    ['contactPhone', 'El telefono de contacto es obligatorio.'],
+    ['documentType', 'Debes indicar el tipo de documento.'],
+    ['documentNumber', 'Debes indicar el numero de documento.'],
+    ['complexName', 'El nombre del complejo es obligatorio.'],
+    ['complexAddress', 'La direccion del complejo es obligatoria.'],
+    ['city', 'La ciudad es obligatoria.'],
+    ['sportsOffered', 'Debes indicar que deportes ofreces.'],
+  ];
+
+  for (const [field, message] of requiredFields) {
+    if (!String(application[field] || '').trim()) {
+      const error = new Error(message);
+      error.status = 400;
+      throw error;
+    }
+  }
+
+  if (!Number.isFinite(application.courtsCount) || application.courtsCount < 1) {
+    const error = new Error('Debes indicar al menos una cancha.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (!isValidArgentinaPhone(application.contactPhone)) {
+    const error = new Error('El telefono del responsable debe ser un numero valido de Argentina.');
+    error.status = 400;
+    throw error;
+  }
+}
+
+function validateClientRegistration({ displayName, phone }) {
+  if (!displayName) {
+    const error = new Error('El nombre de usuario es obligatorio.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (displayName.length < 3) {
+    const error = new Error('El nombre de usuario debe tener al menos 3 caracteres.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (!phone) {
+    const error = new Error('El telefono es obligatorio.');
+    error.status = 400;
+    throw error;
+  }
+
+  if (!isValidArgentinaPhone(phone)) {
+    const error = new Error('Ingresa un telefono valido de Argentina.');
+    error.status = 400;
+    throw error;
+  }
 }
 
 async function buildUserResponse(user, options = {}) {
@@ -193,9 +305,11 @@ function buildUserDirectoryEntry(user, reservationStats, orderStats, ownerBillin
     displayName: user.displayName,
     email: user.email,
     photoURL: user.photoURL || '',
+    phone: user.phone || '',
     role: user.role,
     ownerStatus: user.ownerStatus || null,
     ownerStatusNote: user.ownerStatusNote || '',
+    ownerApplication: user.ownerApplication || null,
     createdAt: user.createdAt,
     updatedAt: user.updatedAt,
     complexes,
@@ -274,27 +388,55 @@ async function buildLatestReservationMap(match) {
 export const registerUser = async (req, res) => {
   try {
     const { uid, email, name, picture } = req.user;
-    const { displayName } = req.body || {};
+    const requestEmail = normalizeEmail(email);
+    const clientDisplayName = normalizeDisplayName(req.body?.displayName || name || requestEmail.split('@')[0]);
+    const clientPhone = normalizePhone(req.body?.phone);
+    const registerAs = req.body.registerAs === 'owner' ? 'owner' : 'client';
 
-    let user = await User.findOne({ $or: [{ uid }, { email }] });
+    let user = await User.findOne({ $or: [{ uid }, { email: requestEmail }] });
     if (user) {
       return res.status(400).json({ message: 'El usuario ya se encuentra registrado.' });
     }
 
+    const ownerApplication =
+      registerAs === 'owner'
+        ? normalizeOwnerApplication(req.body.ownerApplication || {})
+        : null;
+
+    if (ownerApplication) {
+      validateOwnerApplication(ownerApplication);
+    }
+
+    if (registerAs === 'client') {
+      validateClientRegistration({
+        displayName: clientDisplayName,
+        phone: clientPhone,
+      });
+    }
+
     user = new User({
       uid,
-      email,
-      displayName: displayName || name || email.split('@')[0],
+      email: requestEmail,
+      displayName: registerAs === 'owner' ? ownerApplication?.fullName || clientDisplayName : clientDisplayName,
       photoURL: picture,
-      role: req.body.registerAs === 'owner' ? 'owner' : 'client',
-      ownerStatus: req.body.registerAs === 'owner' ? 'PENDING' : null,
+      phone: registerAs === 'owner' ? ownerApplication?.contactPhone || '' : clientPhone,
+      role: registerAs,
+      ownerStatus: registerAs === 'owner' ? 'PENDING' : null,
+      ownerApplication: ownerApplication || undefined,
     });
 
     await user.save();
-    await sendWelcomeEmail(user);
+
+    if (registerAs === 'owner') {
+      await sendOwnerApplicationPendingEmail(user);
+      await sendAdminOwnerApplicationEmail(user);
+    } else {
+      await sendWelcomeEmail(user);
+    }
+
     res.status(201).json(await buildUserResponse(user, { createBillingIfMissing: false }));
   } catch (error) {
-    res.status(500).json({ message: 'Error registrando usuario', error: error.message });
+    res.status(error.status || 500).json({ message: 'Error registrando usuario', error: error.message });
   }
 };
 
@@ -336,7 +478,7 @@ export const updateCurrentUser = async (req, res) => {
       return res.status(404).json({ message: 'Usuario no encontrado' });
     }
 
-    const displayName = String(req.body?.displayName || '').trim();
+    const displayName = normalizeDisplayName(req.body?.displayName);
     const phone = normalizePhone(req.body?.phone);
 
     if (!displayName) {
@@ -345,6 +487,10 @@ export const updateCurrentUser = async (req, res) => {
 
     if (displayName.length > 80) {
       return res.status(400).json({ message: 'El nombre no puede superar los 80 caracteres.' });
+    }
+
+    if (phone && !isValidArgentinaPhone(phone)) {
+      return res.status(400).json({ message: 'Ingresa un telefono valido de Argentina.' });
     }
 
     user.displayName = displayName;
@@ -501,6 +647,10 @@ export const getUserDirectory = async (req, res) => {
           user.role,
           user.ownerStatus,
           user.ownerBilling?.status,
+          user.ownerApplication?.fullName,
+          user.ownerApplication?.complexName,
+          user.ownerApplication?.city,
+          user.ownerApplication?.documentNumber,
           ...user.complexes.map((complex) => complex.name),
         ]),
       );

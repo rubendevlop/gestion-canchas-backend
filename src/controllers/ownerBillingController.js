@@ -3,6 +3,7 @@ import {
   extractMercadoPagoPaymentId,
   getOwnerBillingHistory,
   getOwnerBillingState,
+  maybeSendOwnerBillingPaidNotifications,
   processOwnerBillingOrder,
   syncOwnerBillingPayment,
 } from '../utils/ownerBilling.js';
@@ -227,6 +228,7 @@ export const approveAdminOwnerBillingInvoice = async (req, res) => {
       invoice.adminNote = String(note).trim().slice(0, 500);
     }
     await invoice.save();
+    await maybeSendOwnerBillingPaidNotifications(invoice, invoice.ownerId);
 
     res.json({
       message: `Factura aprobada manualmente. Acceso habilitado hasta ${accessEnd.toLocaleDateString('es-AR')}.`,

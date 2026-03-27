@@ -7,6 +7,20 @@ const userSchema = new mongoose.Schema({
   photoURL:    { type: String },
   phone:       { type: String, default: '' },
   role:        { type: String, enum: ['superadmin', 'owner', 'client'], default: 'client' },
+  ownerApplication: {
+    fullName: { type: String, default: '' },
+    contactPhone: { type: String, default: '' },
+    documentType: { type: String, default: '' },
+    documentNumber: { type: String, default: '' },
+    complexName: { type: String, default: '' },
+    complexAddress: { type: String, default: '' },
+    city: { type: String, default: '' },
+    courtsCount: { type: Number, default: 0 },
+    sportsOffered: { type: String, default: '' },
+    websiteOrInstagram: { type: String, default: '' },
+    notes: { type: String, default: '' },
+    submittedAt: { type: Date, default: null },
+  },
 
   // Solo para role === 'owner':
   // PENDING  → recién registrado, esperando aprobación del superadmin

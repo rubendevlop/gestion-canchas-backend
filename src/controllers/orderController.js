@@ -1,7 +1,7 @@
 import Complex from '../models/Complex.js';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
-import { sendOrderPaidEmail } from '../utils/emailNotifications.js';
+import { sendOrderOwnerPaidEmail, sendOrderPaidEmail } from '../utils/emailNotifications.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 import {
@@ -115,30 +115,52 @@ function applyPaymentSnapshotToOrder(order, snapshot) {
 }
 
 async function maybeSendOrderConfirmationEmail(order) {
-  if (!order || order.status !== 'completed' || order.confirmationEmailSentAt) {
+  if (!order || order.status !== 'completed') {
     return;
   }
 
   const hydratedOrder =
-    order.userId?.email && order.complexId?.name
+    order.userId?.email && order.complexId?.name && order.complexId?.ownerId?.email
       ? order
       : await Order.findById(order._id)
           .populate('userId', 'displayName email')
-          .populate('complexId', 'name')
+          .populate('complexId', 'name ownerId')
           .populate('items.productId', 'name');
 
-  if (!hydratedOrder?.userId?.email) {
+  if (!hydratedOrder) {
     return;
   }
 
-  const result = await sendOrderPaidEmail({
-    order: hydratedOrder,
-    user: hydratedOrder.userId,
-    complex: hydratedOrder.complexId,
-  });
+  let shouldSave = false;
 
-  if (result?.sent) {
-    order.confirmationEmailSentAt = new Date();
+  if (!order.confirmationEmailSentAt && hydratedOrder.userId?.email) {
+    const clientResult = await sendOrderPaidEmail({
+      order: hydratedOrder,
+      user: hydratedOrder.userId,
+      complex: hydratedOrder.complexId,
+    });
+
+    if (clientResult?.sent) {
+      order.confirmationEmailSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (!order.ownerNotificationSentAt && hydratedOrder.complexId?.ownerId?.email) {
+    const ownerResult = await sendOrderOwnerPaidEmail({
+      order: hydratedOrder,
+      owner: hydratedOrder.complexId.ownerId,
+      user: hydratedOrder.userId,
+      complex: hydratedOrder.complexId,
+    });
+
+    if (ownerResult?.sent) {
+      order.ownerNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
     await order.save();
   }
 }

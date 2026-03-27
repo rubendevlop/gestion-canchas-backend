@@ -27,6 +27,8 @@ const ownerBillingSchema = new mongoose.Schema(
     mercadoPagoStatusDetail: { type: String, default: '' },
     mercadoPagoPaymentMethodId: { type: String, default: '' },
     mercadoPagoPaymentMethodType: { type: String, default: '' },
+    ownerNotificationSentAt: { type: Date, default: null },
+    adminNotificationSentAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
