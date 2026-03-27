@@ -130,11 +130,23 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
     headers,
   });
 
-  const data = await response.json().catch(() => ({}));
+  const rawResponse = await response.text().catch(() => '');
+  let data = {};
+
+  if (rawResponse) {
+    try {
+      data = JSON.parse(rawResponse);
+    } catch {
+      data = {};
+    }
+  }
 
   if (!response.ok) {
     const causeDescription = Array.isArray(data.cause)
       ? data.cause.map((cause) => cause?.description).filter(Boolean).join(' | ')
+      : '';
+    const rawResponseSnippet = rawResponse
+      ? String(rawResponse).replace(/\s+/g, ' ').trim().slice(0, 280)
       : '';
     console.error('Mercado Pago request failed', {
       path,
@@ -149,11 +161,16 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
               description: cause?.description,
             }))
           : [],
+        raw: !data.message && !data.error && !Array.isArray(data.cause) ? rawResponseSnippet : '',
       },
     });
 
     const error = new Error(
-      causeDescription || data.message || data.error || 'Mercado Pago rechazo la operacion.',
+      causeDescription ||
+        data.message ||
+        data.error ||
+        rawResponseSnippet ||
+        'Mercado Pago rechazo la operacion.',
     );
     error.status = response.status;
     error.payload = data;
@@ -217,15 +234,18 @@ export function buildOrderPaymentPayload(formData = {}, additionalData = {}, fal
     },
   };
 
-  if (formData.issuer_id) {
-    payment.payment_method.issuer_id = String(formData.issuer_id);
-  }
-
-  if (formData.payment_method_option_id) {
-    payment.payment_method.payment_method_option_id = String(formData.payment_method_option_id);
-  }
-
   return payment;
+}
+
+function normalizePayerIdentification(identification = {}) {
+  const type = String(identification?.type || '').trim();
+  const number = String(identification?.number || '').trim();
+
+  if (!type || !number) {
+    return undefined;
+  }
+
+  return { type, number };
 }
 
 export function buildWebhookUrl(pathname) {
@@ -249,6 +269,7 @@ export async function createAutomaticMercadoPagoOrder({
   accessToken = '',
 }) {
   const normalizedReference = normalizeExternalReference(externalReference);
+  const normalizedIdentification = normalizePayerIdentification(payer.identification);
   const payload = {
     type: 'online',
     processing_mode: 'automatic',
@@ -256,7 +277,7 @@ export async function createAutomaticMercadoPagoOrder({
     total_amount: formatMercadoPagoAmount(totalAmount),
     payer: {
       email: payer.email,
-      ...(payer.identification ? { identification: payer.identification } : {}),
+      ...(normalizedIdentification ? { identification: normalizedIdentification } : {}),
     },
     transactions: {
       payments: [buildOrderPaymentPayload(formData, additionalData, totalAmount)],
