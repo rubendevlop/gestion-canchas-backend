@@ -1,6 +1,6 @@
 import express from 'express';
 import {
-  registerUser, loginUser, getCurrentUser,
+  registerUser, loginUser, getCurrentUser, updateCurrentUser,
   listUsers, updateUserRole, approveOwner, rejectOwner, getUserDirectory
 } from '../controllers/userController.js';
 import { verifyAuth, requireRole } from '../middlewares/authMiddleware.js';
@@ -10,6 +10,7 @@ const router = express.Router();
 router.post('/register', verifyAuth, registerUser);
 router.post('/login',    verifyAuth, loginUser);
 router.get('/me',        verifyAuth, getCurrentUser);
+router.patch('/me',      verifyAuth, updateCurrentUser);
 
 // Solo superadmin
 router.get('/directory',          verifyAuth, requireRole(['owner', 'superadmin']), getUserDirectory);

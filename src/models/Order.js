@@ -22,6 +22,7 @@ const orderSchema = new mongoose.Schema({
   mercadoPagoPaymentMethodId: { type: String, default: '' },
   mercadoPagoPaymentMethodType: { type: String, default: '' },
   paidAt: { type: Date, default: null },
+  confirmationEmailSentAt: { type: Date, default: null },
 }, { timestamps: true });
 
 export default mongoose.model('Order', orderSchema);

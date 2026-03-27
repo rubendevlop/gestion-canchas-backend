@@ -15,7 +15,8 @@ export const resolveDbUser = async (authUser) => {
 
   user.uid = uid;
 
-  if (name && user.displayName !== name) {
+  // Keep the editable profile name from our DB if the user already changed it locally.
+  if (name && !user.displayName) {
     user.displayName = name;
   }
 

@@ -5,6 +5,7 @@ const userSchema = new mongoose.Schema({
   email:       { type: String, required: true, unique: true },
   displayName: { type: String, required: true },
   photoURL:    { type: String },
+  phone:       { type: String, default: '' },
   role:        { type: String, enum: ['superadmin', 'owner', 'client'], default: 'client' },
 
   // Solo para role === 'owner':

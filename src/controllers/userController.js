@@ -3,8 +3,16 @@ import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Order from '../models/Order.js';
 import Reservation from '../models/Reservation.js';
+import { sendOwnerStatusEmail, sendWelcomeEmail } from '../utils/emailNotifications.js';
 import { getOwnerBillingState } from '../utils/ownerBilling.js';
 import { resolveDbUser } from '../utils/resolveDbUser.js';
+
+function normalizePhone(value = '') {
+  return String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 40);
+}
 
 async function buildUserResponse(user, options = {}) {
   const { createBillingIfMissing = true } = options;
@@ -283,6 +291,7 @@ export const registerUser = async (req, res) => {
     });
 
     await user.save();
+    await sendWelcomeEmail(user);
     res.status(201).json(await buildUserResponse(user, { createBillingIfMissing: false }));
   } catch (error) {
     res.status(500).json({ message: 'Error registrando usuario', error: error.message });
@@ -316,6 +325,35 @@ export const getCurrentUser = async (req, res) => {
     res.json(await buildUserResponse(user));
   } catch (error) {
     res.status(500).json({ message: 'Error obteniendo perfil', error: error.message });
+  }
+};
+
+// PATCH /api/users/me
+export const updateCurrentUser = async (req, res) => {
+  try {
+    const user = await resolveDbUser(req.user);
+    if (!user) {
+      return res.status(404).json({ message: 'Usuario no encontrado' });
+    }
+
+    const displayName = String(req.body?.displayName || '').trim();
+    const phone = normalizePhone(req.body?.phone);
+
+    if (!displayName) {
+      return res.status(400).json({ message: 'El nombre es obligatorio.' });
+    }
+
+    if (displayName.length > 80) {
+      return res.status(400).json({ message: 'El nombre no puede superar los 80 caracteres.' });
+    }
+
+    user.displayName = displayName;
+    user.phone = phone;
+    await user.save();
+
+    res.json(await buildUserResponse(user));
+  } catch (error) {
+    res.status(500).json({ message: 'Error actualizando perfil', error: error.message });
   }
 };
 
@@ -515,6 +553,7 @@ export const approveOwner = async (req, res) => {
     user.ownerStatusNote = req.body.note || '';
 
     await user.save();
+    await sendOwnerStatusEmail(user, 'APPROVED', user.ownerStatusNote);
     res.json(await buildUserResponse(user));
   } catch (error) {
     res.status(500).json({ message: 'Error aprobando owner', error: error.message });
@@ -534,6 +573,7 @@ export const rejectOwner = async (req, res) => {
     user.ownerStatusNote = req.body.reason || '';
 
     await user.save();
+    await sendOwnerStatusEmail(user, 'REJECTED', user.ownerStatusNote);
     res.json(await buildUserResponse(user, { createBillingIfMissing: false }));
   } catch (error) {
     res.status(500).json({ message: 'Error rechazando owner', error: error.message });

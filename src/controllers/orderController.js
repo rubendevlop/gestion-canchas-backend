@@ -1,6 +1,7 @@
 import Complex from '../models/Complex.js';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
+import { sendOrderPaidEmail } from '../utils/emailNotifications.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 import {
@@ -113,6 +114,35 @@ function applyPaymentSnapshotToOrder(order, snapshot) {
   order.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
 }
 
+async function maybeSendOrderConfirmationEmail(order) {
+  if (!order || order.status !== 'completed' || order.confirmationEmailSentAt) {
+    return;
+  }
+
+  const hydratedOrder =
+    order.userId?.email && order.complexId?.name
+      ? order
+      : await Order.findById(order._id)
+          .populate('userId', 'displayName email')
+          .populate('complexId', 'name')
+          .populate('items.productId', 'name');
+
+  if (!hydratedOrder?.userId?.email) {
+    return;
+  }
+
+  const result = await sendOrderPaidEmail({
+    order: hydratedOrder,
+    user: hydratedOrder.userId,
+    complex: hydratedOrder.complexId,
+  });
+
+  if (result?.sent) {
+    order.confirmationEmailSentAt = new Date();
+    await order.save();
+  }
+}
+
 async function syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder) {
   const snapshot = getMercadoPagoOrderSnapshot(mercadoPagoOrder);
   applySnapshotToOrder(localOrder, snapshot);
@@ -129,6 +159,7 @@ async function syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder) 
   }
 
   await localOrder.save();
+  await maybeSendOrderConfirmationEmail(localOrder);
   return localOrder;
 }
 
@@ -148,6 +179,7 @@ async function syncLocalOrderFromMercadoPagoPayment(localOrder, mercadoPagoPayme
   }
 
   await localOrder.save();
+  await maybeSendOrderConfirmationEmail(localOrder);
   return localOrder;
 }
 

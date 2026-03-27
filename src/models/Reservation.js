@@ -25,6 +25,7 @@ const reservationSchema = new mongoose.Schema({
   paidAt: { type: Date, default: null },
   refundedAt: { type: Date, default: null },
   refundAmount: { type: Number, default: 0 },
+  confirmationEmailSentAt: { type: Date, default: null },
 }, { timestamps: true });
 
 export default mongoose.model('Reservation', reservationSchema);

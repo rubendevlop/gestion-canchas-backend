@@ -1,6 +1,7 @@
 import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Reservation from '../models/Reservation.js';
+import { sendReservationPaidEmail } from '../utils/emailNotifications.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import {
   buildWebhookUrl,
@@ -155,6 +156,36 @@ async function cancelUnpaidReservation(reservation) {
   return reservation;
 }
 
+async function maybeSendReservationConfirmationEmail(reservation) {
+  if (!reservation || reservation.paymentStatus !== 'PAID' || reservation.confirmationEmailSentAt) {
+    return;
+  }
+
+  const hydratedReservation =
+    reservation.user?.email && reservation.court?.name && reservation.complexId?.name
+      ? reservation
+      : await Reservation.findById(reservation._id)
+          .populate('user', 'displayName email')
+          .populate('court', 'name sport')
+          .populate('complexId', 'name');
+
+  if (!hydratedReservation?.user?.email) {
+    return;
+  }
+
+  const result = await sendReservationPaidEmail({
+    reservation: hydratedReservation,
+    user: hydratedReservation.user,
+    court: hydratedReservation.court,
+    complex: hydratedReservation.complexId,
+  });
+
+  if (result?.sent) {
+    reservation.confirmationEmailSentAt = new Date();
+    await reservation.save();
+  }
+}
+
 async function syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder) {
   const snapshot = getMercadoPagoOrderSnapshot(mercadoPagoOrder);
   const refundSnapshot = getMercadoPagoOrderRefundSnapshot(mercadoPagoOrder);
@@ -186,6 +217,7 @@ async function syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder
   }
 
   await reservation.save();
+  await maybeSendReservationConfirmationEmail(reservation);
   return reservation;
 }
 
@@ -216,6 +248,7 @@ async function syncReservationFromMercadoPagoPayment(reservation, mercadoPagoPay
   }
 
   await reservation.save();
+  await maybeSendReservationConfirmationEmail(reservation);
   return reservation;
 }
 
