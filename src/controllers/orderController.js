@@ -301,14 +301,20 @@ export const createOrder = async (req, res) => {
 
     newOrder.externalReference = buildExternalReference(newOrder._id.toString());
     await newOrder.save();
-
-    const checkout = await createOrderCheckout(
-      newOrder,
-      req.dbUser,
-      complex,
-      paymentProvider,
-      productsById,
-    );
+    let checkout;
+    try {
+      checkout = await createOrderCheckout(
+        newOrder,
+        req.dbUser,
+        complex,
+        paymentProvider,
+        productsById,
+      );
+    } catch (paymentError) {
+      newOrder.status = 'failed';
+      await newOrder.save();
+      throw paymentError;
+    }
 
     res.status(201).json({
       order: checkout.order,
