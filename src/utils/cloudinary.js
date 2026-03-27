@@ -3,6 +3,7 @@ import { v2 as cloudinary } from 'cloudinary';
 const ENTITY_FOLDERS = {
   product: 'gestion-canchas/products',
   court: 'gestion-canchas/courts',
+  complex: 'gestion-canchas/complexes',
 };
 
 function getConfig() {

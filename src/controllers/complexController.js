@@ -4,6 +4,7 @@ import {
   assertComplexClientAccess,
   filterClientVisibleComplexes,
 } from '../utils/ownerBilling.js';
+import { destroyCloudinaryAsset } from '../utils/cloudinary.js';
 
 async function withCourtsCount(complexes) {
   return Promise.all(
@@ -16,11 +17,19 @@ async function withCourtsCount(complexes) {
 
 export const createComplex = async (req, res) => {
   try {
-    const { name, address, phone, logo, openingHours } = req.body;
+    const { name, address, phone, logo, logoPublicId, openingHours } = req.body;
     const ownerId =
       req.dbUser.role === 'superadmin' && req.body.ownerId ? req.body.ownerId : req.dbUser._id;
 
-    const newComplex = new Complex({ name, address, phone, logo, openingHours, ownerId });
+    const newComplex = new Complex({
+      name,
+      address,
+      phone,
+      logo: String(logo || '').trim(),
+      logoPublicId: String(logoPublicId || '').trim(),
+      openingHours,
+      ownerId,
+    });
     await newComplex.save();
     res.status(201).json(newComplex);
   } catch (error) {
@@ -99,15 +108,26 @@ export const updateComplex = async (req, res) => {
       return res.status(403).json({ error: 'No tenes permiso para editar este complejo.' });
     }
 
-    const { name, address, phone, logo, openingHours, isActive } = req.body;
+    const { name, address, phone, logo, logoPublicId, openingHours, isActive } = req.body;
+    const previousLogoPublicId = complex.logoPublicId || '';
     if (name !== undefined) complex.name = name;
     if (address !== undefined) complex.address = address;
     if (phone !== undefined) complex.phone = phone;
-    if (logo !== undefined) complex.logo = logo;
+    if (logo !== undefined) complex.logo = String(logo || '').trim();
+    if (logoPublicId !== undefined) complex.logoPublicId = String(logoPublicId || '').trim();
     if (openingHours !== undefined) complex.openingHours = openingHours;
     if (isActive !== undefined) complex.isActive = isActive;
 
     await complex.save();
+
+    if (
+      previousLogoPublicId &&
+      logoPublicId !== undefined &&
+      previousLogoPublicId !== complex.logoPublicId
+    ) {
+      await destroyCloudinaryAsset(previousLogoPublicId);
+    }
+
     res.json(complex);
   } catch (error) {
     res.status(500).json({ error: 'Error al actualizar el complejo', detail: error.message });
