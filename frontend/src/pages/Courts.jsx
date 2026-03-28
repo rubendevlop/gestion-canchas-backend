@@ -263,7 +263,7 @@ export default function Courts() {
         <button
           type="button"
           onClick={openCreate}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary_container to-primary px-6 py-3 font-semibold text-on_primary_fixed shadow-[0_8px_30px_-10px_rgba(23,101,242,0.5)] transition-all hover:scale-[1.01] hover:brightness-110 sm:w-auto"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary_container to-primary px-6 py-3 font-semibold text-on_primary_fixed shadow-[0_8px_30px_-10px_rgba(47,172,76,0.42)] transition-all hover:scale-[1.01] hover:brightness-110 sm:w-auto"
         >
           <Plus size={20} />
           Nueva cancha

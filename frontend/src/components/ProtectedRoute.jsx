@@ -13,65 +13,88 @@ import { logout } from '../auth';
 import { useAuth } from '../contexts/AuthContext';
 import { fetchAPI } from '../services/api';
 import MercadoPagoCardModal from './MercadoPagoCardModal';
+import DashboardLayout from '../layouts/DashboardLayout';
 
 const LOADING_SCREEN = (
-  <div className="min-h-screen flex items-center justify-center bg-[#131313]">
-    <div className="flex flex-col items-center gap-4">
-      <div className="w-8 h-8 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+  <div className="min-h-screen flex items-center justify-center bg-background px-6">
+    <div className="flex flex-col items-center gap-4 rounded-[1.75rem] border border-outline_variant/20 bg-white px-8 py-10 shadow-[0_28px_60px_-36px_rgba(24,36,24,0.22)]">
+      <div className="w-10 h-10 border-2 border-primary/30 border-t-primary rounded-full animate-spin" />
       <p className="text-on_surface_variant text-sm">Verificando sesion...</p>
     </div>
   </div>
 );
 
+function AdminPanelState({ children }) {
+  return (
+    <DashboardLayout>
+      <div className="mx-auto flex min-h-[70vh] w-full max-w-3xl items-center justify-center">
+        {children}
+      </div>
+    </DashboardLayout>
+  );
+}
+
 function PendingApprovalScreen() {
   return (
-    <div className="min-h-screen bg-[#131313] flex items-center justify-center p-6">
-      <div className="max-w-md w-full text-center">
-        <div className="w-20 h-20 rounded-3xl bg-yellow-400/10 flex items-center justify-center mx-auto mb-6">
-          <Clock size={36} className="text-yellow-400" />
+    <AdminPanelState>
+      <div className="w-full rounded-[2rem] border border-outline_variant/20 bg-white/92 p-8 shadow-[0_32px_72px_-40px_rgba(24,36,24,0.22)] sm:p-10">
+        <div className="flex h-18 w-18 items-center justify-center rounded-[1.75rem] bg-yellow-400/12 text-yellow-500">
+          <Clock size={34} />
         </div>
-        <h1 className="text-3xl font-display font-bold text-on_surface mb-3">Solicitud en revision</h1>
-        <p className="text-on_surface_variant mb-6 leading-relaxed">
-          Tu solicitud para operar como <span className="font-semibold text-on_surface">Dueno de Complejo</span> esta siendo revisada por un superadmin.
-          Hasta que sea aprobada no podes entrar al panel ni gestionar canchas, reservas o productos.
+        <h1 className="mt-6 text-3xl font-display font-bold text-on_surface">Solicitud en revision</h1>
+        <p className="mt-3 max-w-2xl text-base leading-relaxed text-on_surface_variant">
+          Tu solicitud para operar como <span className="font-semibold text-on_surface">Dueno de complejo</span> esta siendo revisada por un superadmin. Cuando se apruebe vas a poder gestionar canchas, reservas y productos desde este mismo panel.
         </p>
-        <div className="bg-surface_container rounded-2xl p-4 text-left space-y-2 mb-8">
-          <p className="flex items-center gap-2 text-sm text-on_surface_variant">
-            <Clock size={14} className="text-yellow-400 shrink-0" />
-            Revision estimada: 24-48 hs habiles
-          </p>
-          <p className="flex items-center gap-2 text-sm text-on_surface_variant">
-            <Clock size={14} className="text-yellow-400 shrink-0" />
-            Cuando te validen, vas a poder ingresar como dueno
-          </p>
+
+        <div className="mt-8 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-3xl bg-surface_container_low p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-outline">Estado</p>
+            <p className="mt-2 text-lg font-semibold text-on_surface">Pendiente de aprobacion</p>
+            <p className="mt-2 text-sm text-on_surface_variant">Todavia no hace falta que cargues nada mas.</p>
+          </div>
+          <div className="rounded-3xl bg-surface_container_low p-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-outline">Tiempo estimado</p>
+            <p className="mt-2 text-lg font-semibold text-on_surface">24 a 48 hs habiles</p>
+            <p className="mt-2 text-sm text-on_surface_variant">Te avisaremos cuando el acceso quede habilitado.</p>
+          </div>
         </div>
-        <LogoutButton />
+
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <LogoutButton className="sm:w-auto sm:px-6" />
+        </div>
       </div>
-    </div>
+    </AdminPanelState>
   );
 }
 
 function RejectedScreen({ note }) {
   return (
-    <div className="min-h-screen bg-[#131313] flex items-center justify-center p-6">
-      <div className="max-w-md w-full text-center">
-        <div className="w-20 h-20 rounded-3xl bg-red-400/10 flex items-center justify-center mx-auto mb-6">
-          <XCircle size={36} className="text-red-400" />
+    <AdminPanelState>
+      <div className="w-full rounded-[2rem] border border-outline_variant/20 bg-white/92 p-8 shadow-[0_32px_72px_-40px_rgba(24,36,24,0.22)] sm:p-10">
+        <div className="flex h-18 w-18 items-center justify-center rounded-[1.75rem] bg-red-500/10 text-red-500">
+          <XCircle size={34} />
         </div>
-        <h1 className="text-3xl font-display font-bold text-on_surface mb-3">Solicitud rechazada</h1>
-        <p className="text-on_surface_variant mb-4 leading-relaxed">
-          Tu solicitud para operar como <span className="font-semibold text-on_surface">Dueno de Complejo</span> fue rechazada.
+        <h1 className="mt-6 text-3xl font-display font-bold text-on_surface">Solicitud rechazada</h1>
+        <p className="mt-3 max-w-2xl text-base leading-relaxed text-on_surface_variant">
+          La solicitud para operar como <span className="font-semibold text-on_surface">Dueno de complejo</span> fue rechazada. Desde este panel podes revisar la observacion y volver a intentar cuando corresponda.
         </p>
+
         {note && (
-          <div className="bg-red-400/5 border border-red-400/15 rounded-2xl px-5 py-4 mb-6 text-left">
-            <p className="text-xs text-outline uppercase tracking-wider mb-1">Motivo:</p>
-            <p className="text-sm text-on_surface_variant">{note}</p>
+          <div className="mt-8 rounded-3xl border border-red-500/15 bg-red-500/5 px-5 py-5">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-red-500">Observacion</p>
+            <p className="mt-2 text-sm leading-relaxed text-on_surface_variant">{note}</p>
           </div>
         )}
-        <p className="text-sm text-outline mb-8">Podes contactarnos para mas informacion o registrarte como cliente.</p>
-        <LogoutButton />
+
+        <p className="mt-6 text-sm text-outline">
+          Si hace falta, podes contactarte con soporte para corregir la solicitud antes de volver a presentarla.
+        </p>
+
+        <div className="mt-8 flex flex-col gap-3 sm:flex-row">
+          <LogoutButton className="sm:w-auto sm:px-6" />
+        </div>
       </div>
-    </div>
+    </AdminPanelState>
   );
 }
 
@@ -136,29 +159,31 @@ function BillingRequiredScreen({ ownerBilling, refreshProfile, user }) {
   };
 
   return (
-    <div className="min-h-screen bg-[#131313] flex items-center justify-center p-6">
-      <div className="max-w-lg w-full text-center">
-        <div className="w-20 h-20 rounded-3xl bg-primary/10 flex items-center justify-center mx-auto mb-6">
-          <CreditCard size={36} className="text-primary" />
+    <AdminPanelState>
+      <div className="w-full rounded-[2rem] border border-outline_variant/20 bg-white/92 p-8 shadow-[0_32px_72px_-40px_rgba(24,36,24,0.22)] sm:p-10">
+        <div className="flex h-18 w-18 items-center justify-center rounded-[1.75rem] bg-primary/10 text-primary">
+          <CreditCard size={34} />
         </div>
-        <h1 className="text-3xl font-display font-bold text-on_surface mb-3">Pago mensual requerido</h1>
-        <p className="text-on_surface_variant mb-6 leading-relaxed">
-          Tu cuenta owner ya fue aprobada, pero para usar el panel tenes que abonar la mensualidad del complejo mediante un pago directo de Mercado Pago.
+        <h1 className="mt-6 text-3xl font-display font-bold text-on_surface">Pago mensual requerido</h1>
+        <p className="mt-3 max-w-2xl text-base leading-relaxed text-on_surface_variant">
+          Tu cuenta owner ya fue aprobada, pero para usar el panel tenes que abonar la mensualidad del complejo mediante un pago directo con Mercado Pago.
         </p>
 
-        <div className="bg-surface_container rounded-3xl p-5 text-left space-y-3 mb-6">
-          <Row label="Estado" value="Pendiente de pago" />
-          <Row label="Mensualidad" value={amountLabel} />
-          <Row
-            label="Vence"
-            value={currentInvoice?.dueDate ? formatDate(currentInvoice.dueDate) : 'Pendiente'}
-          />
-          <Row label="Proveedor" value="Mercado Pago" />
+        <div className="mt-8 rounded-[1.75rem] bg-surface_container_low p-5 text-left">
+          <div className="grid gap-4 sm:grid-cols-2">
+            <Row label="Estado" value="Pendiente de pago" />
+            <Row label="Mensualidad" value={amountLabel} />
+            <Row
+              label="Vence"
+              value={currentInvoice?.dueDate ? formatDate(currentInvoice.dueDate) : 'Pendiente'}
+            />
+            <Row label="Proveedor" value="Mercado Pago" />
+          </div>
         </div>
 
         {!ownerBilling?.providerConfigured && (
-          <div className="mb-6 rounded-2xl border border-yellow-400/15 bg-yellow-400/5 px-5 py-4 text-left">
-            <p className="flex items-center gap-2 text-sm font-medium text-yellow-400">
+          <div className="mt-6 rounded-3xl border border-yellow-400/15 bg-yellow-400/5 px-5 py-4 text-left">
+            <p className="flex items-center gap-2 text-sm font-medium text-yellow-500">
               <ShieldAlert size={16} />
               Mercado Pago todavia no esta configurado.
             </p>
@@ -169,12 +194,12 @@ function BillingRequiredScreen({ ownerBilling, refreshProfile, user }) {
         )}
 
         {message && (
-          <div className="mb-6 rounded-2xl border border-red-400/15 bg-red-400/5 px-5 py-4 text-sm text-red-400">
+          <div className="mt-6 rounded-3xl border border-red-500/15 bg-red-500/5 px-5 py-4 text-sm text-red-500">
             {message}
           </div>
         )}
 
-        <div className="grid gap-3">
+        <div className="mt-8 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_auto]">
           <button
             type="button"
             onClick={handleCheckout}
@@ -195,7 +220,7 @@ function BillingRequiredScreen({ ownerBilling, refreshProfile, user }) {
             {loadingRefresh ? 'Actualizando...' : 'Ya pague, actualizar estado'}
           </button>
 
-          <LogoutButton />
+          <LogoutButton className="sm:w-auto sm:px-5" />
         </div>
 
         <MercadoPagoCardModal
@@ -205,14 +230,14 @@ function BillingRequiredScreen({ ownerBilling, refreshProfile, user }) {
           amount={Number(paymentSession?.amount || ownerBilling?.amount || 0)}
           currency={paymentSession?.currency || ownerBilling?.currency || 'ARS'}
           payerEmail={paymentSession?.payer?.email || user?.email || ''}
-          allowPayerEmailEdit
+          allowPayerEmailEdit={!paymentSession?.payer?.usesConfiguredTestEmail}
           payerEmailHelpText="Si estas usando credenciales de prueba, carga el email de un comprador de prueba de Mercado Pago. No uses tu email real."
           submitLabel="mensualidad"
           onClose={() => setPaymentSession(null)}
           onSubmit={handleProcessPayment}
         />
       </div>
-    </div>
+    </AdminPanelState>
   );
 }
 
@@ -225,11 +250,11 @@ function Row({ label, value }) {
   );
 }
 
-function LogoutButton() {
+function LogoutButton({ className = '' }) {
   return (
     <button
       onClick={() => logout().then(() => { window.location.href = '/login'; })}
-      className="flex items-center justify-center gap-2 w-full bg-surface_container border border-outline_variant/20 text-on_surface_variant py-3 rounded-2xl hover:bg-surface_container_highest transition-colors text-sm"
+      className={`flex items-center justify-center gap-2 w-full bg-surface_container border border-outline_variant/20 text-on_surface_variant py-3 rounded-2xl hover:bg-surface_container_highest transition-colors text-sm ${className}`.trim()}
     >
       <LogOut size={16} /> Cerrar sesion
     </button>

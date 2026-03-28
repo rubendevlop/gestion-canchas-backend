@@ -10,6 +10,7 @@ import {
   DollarSign,
   Loader2,
   Plus,
+  RotateCcw,
   User,
   X,
 } from 'lucide-react';
@@ -37,6 +38,13 @@ const STATUS_STYLE = {
   CANCELLED: { label: 'Cancelada', cls: 'bg-red-400/10 text-red-400 border-red-400/20' },
 };
 
+const PAYMENT_STYLE = {
+  UNPAID: { label: 'Sin cobrar', cls: 'bg-red-400/10 text-red-400 border-red-400/20' },
+  PARTIAL: { label: 'Parcial', cls: 'bg-yellow-400/10 text-yellow-400 border-yellow-400/20' },
+  PAID: { label: 'Pagada', cls: 'bg-green-400/10 text-green-400 border-green-400/20' },
+  REFUNDED: { label: 'Reembolsada', cls: 'bg-sky-400/10 text-sky-400 border-sky-400/20' },
+};
+
 const INPUT_CLS =
   'w-full rounded-2xl border border-outline_variant/15 bg-surface_container px-4 py-3 text-sm text-on_surface placeholder:text-outline focus:border-primary/40 focus:outline-none focus:ring-2 focus:ring-primary/15';
 
@@ -51,6 +59,7 @@ export default function Reservations() {
   const [selectedReservation, setSelectedReservation] = useState(null);
   const [form, setForm] = useState({ courtId: '', date: '', startTime: '' });
   const [saving, setSaving] = useState(false);
+  const [reservationActionId, setReservationActionId] = useState('');
   const [takenHours, setTakenHours] = useState([]);
   const [slotsLoading, setSlotsLoading] = useState(false);
   const selectedCourt = useMemo(
@@ -191,12 +200,15 @@ export default function Reservations() {
   };
 
   const handleConfirm = async (reservationId) => {
+    setReservationActionId(reservationId);
     try {
       await fetchAPI(`/reservations/${reservationId}/confirm`, { method: 'PATCH' });
       await refetchReservations();
       setSelectedReservation(null);
     } catch (error) {
       alert(error.message || 'No se pudo confirmar la reserva.');
+    } finally {
+      setReservationActionId('');
     }
   };
 
@@ -204,12 +216,31 @@ export default function Reservations() {
     const shouldCancel = confirm('Se va a cancelar esta reserva. Quieres continuar?');
     if (!shouldCancel) return;
 
+    setReservationActionId(reservationId);
     try {
       await fetchAPI(`/reservations/${reservationId}/cancel`, { method: 'PATCH' });
       await refetchReservations();
       setSelectedReservation(null);
     } catch (error) {
       alert(error.message || 'No se pudo cancelar la reserva.');
+    } finally {
+      setReservationActionId('');
+    }
+  };
+
+  const handleRefund = async (reservationId) => {
+    const shouldRefund = confirm('Se va a reembolsar el pago de esta reserva. Quieres continuar?');
+    if (!shouldRefund) return;
+
+    setReservationActionId(reservationId);
+    try {
+      await fetchAPI(`/reservations/${reservationId}/refund`, { method: 'POST' });
+      await refetchReservations();
+      setSelectedReservation(null);
+    } catch (error) {
+      alert(error.message || 'No se pudo reembolsar la reserva.');
+    } finally {
+      setReservationActionId('');
     }
   };
 
@@ -243,7 +274,7 @@ export default function Reservations() {
         <button
           type="button"
           onClick={openCreateModal}
-          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary_container to-primary px-6 py-3 font-semibold text-on_primary_fixed shadow-[0_8px_30px_-10px_rgba(23,101,242,0.5)] transition-all hover:scale-[1.01] hover:brightness-110 sm:w-auto"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary_container to-primary px-6 py-3 font-semibold text-on_primary_fixed shadow-[0_8px_30px_-10px_rgba(47,172,76,0.42)] transition-all hover:scale-[1.01] hover:brightness-110 sm:w-auto"
         >
           <Plus size={20} />
           Nueva reserva
@@ -413,6 +444,8 @@ export default function Reservations() {
             reservation={selectedReservation}
             onConfirm={handleConfirm}
             onCancel={handleCancel}
+            onRefund={handleRefund}
+            processing={reservationActionId === selectedReservation._id}
           />
         </Modal>
       )}
@@ -485,17 +518,23 @@ function DayAgendaCard({ date, isToday, reservations, onSelect }) {
   );
 }
 
-function ReservationDetail({ reservation, onConfirm, onCancel }) {
+function ReservationDetail({ reservation, onConfirm, onCancel, onRefund, processing = false }) {
   const style = STATUS_STYLE[reservation.status] || STATUS_STYLE.PENDING;
+  const paymentMeta = PAYMENT_STYLE[reservation.paymentStatus] || PAYMENT_STYLE.UNPAID;
+  const canRefund = reservation.paymentStatus === 'PAID' && Boolean(reservation.mercadoPagoOrderId);
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${style.cls}`}>
-          {style.label}
-        </span>
-        <span className="text-sm font-medium text-primary">
-          ${Number(reservation.totalPrice || 0).toLocaleString('es-AR')}
-        </span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${style.cls}`}>
+            {style.label}
+          </span>
+          <span className={`rounded-full border px-3 py-1.5 text-xs font-semibold uppercase tracking-wider ${paymentMeta.cls}`}>
+            {paymentMeta.label}
+          </span>
+        </div>
+        <span className="text-sm font-medium text-primary">${Number(reservation.totalPrice || 0).toLocaleString('es-AR')}</span>
       </div>
 
       <div className="space-y-3 rounded-[1.5rem] bg-surface_container p-4">
@@ -509,29 +548,47 @@ function ReservationDetail({ reservation, onConfirm, onCancel }) {
         {reservation.user?.createdAt && (
           <InfoRow icon={<User size={15} />} label="Alta" value={new Date(reservation.user.createdAt).toLocaleDateString('es-AR')} />
         )}
-        <InfoRow icon={<DollarSign size={15} />} label="Pago" value={reservation.paymentStatus || 'UNPAID'} />
+        <InfoRow icon={<DollarSign size={15} />} label="Pago" value={paymentMeta.label} />
+        {reservation.refundedAt && (
+          <InfoRow icon={<RotateCcw size={15} />} label="Reembolso" value={formatDateTime(reservation.refundedAt)} />
+        )}
       </div>
 
-      {reservation.status !== 'CANCELLED' && (
-        <div className="flex flex-col gap-3 pt-2 sm:flex-row">
+      {(reservation.status !== 'CANCELLED' || canRefund) && (
+        <div className="flex flex-col gap-3 pt-2 sm:flex-row sm:flex-wrap">
           {reservation.status === 'PENDING' && (
             <button
               type="button"
               onClick={() => onConfirm(reservation._id)}
+              disabled={processing}
               className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-green-400/20 bg-green-400/10 px-4 py-3 text-sm font-semibold text-green-400 transition-colors hover:bg-green-400/15"
             >
-              <CheckCircle2 size={16} />
-              Confirmar
+              {processing ? <Loader2 size={16} className="animate-spin" /> : <CheckCircle2 size={16} />}
+              {processing ? 'Procesando...' : 'Confirmar'}
             </button>
           )}
-          <button
-            type="button"
-            onClick={() => onCancel(reservation._id)}
-            className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm font-semibold text-red-400 transition-colors hover:bg-red-400/15"
-          >
-            <X size={16} />
-            Cancelar
-          </button>
+          {canRefund && (
+            <button
+              type="button"
+              onClick={() => onRefund(reservation._id)}
+              disabled={processing}
+              className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-sky-400/20 bg-sky-400/10 px-4 py-3 text-sm font-semibold text-sky-400 transition-colors hover:bg-sky-400/15 disabled:opacity-60"
+            >
+              {processing ? <Loader2 size={16} className="animate-spin" /> : <RotateCcw size={16} />}
+              {processing ? 'Procesando...' : 'Reembolsar'}
+            </button>
+          )}
+          {reservation.status !== 'CANCELLED' && (
+            <button
+              type="button"
+              onClick={() => onCancel(reservation._id)}
+              disabled={processing}
+              className="flex flex-1 items-center justify-center gap-2 rounded-2xl border border-red-400/20 bg-red-400/10 px-4 py-3 text-sm font-semibold text-red-400 transition-colors hover:bg-red-400/15 disabled:opacity-60"
+            >
+              {processing ? <Loader2 size={16} className="animate-spin" /> : <X size={16} />}
+              {processing ? 'Procesando...' : 'Cancelar'}
+            </button>
+          )}
         </div>
       )}
     </div>

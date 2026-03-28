@@ -1,8 +1,6 @@
 import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { useMemo, useState } from 'react';
-import { ChevronLeft, CheckCircle2, Loader2, Trash2 } from 'lucide-react';
-import MercadoPagoCardModal from '../../components/MercadoPagoCardModal';
-import { useAuth } from '../../contexts/AuthContext';
+import { ChevronLeft, CheckCircle2, Loader2, MapPin, Trash2 } from 'lucide-react';
 import { fetchAPI } from '../../services/api';
 
 function formatMoney(value) {
@@ -17,15 +15,12 @@ export default function Cart() {
   const { complexId } = useParams();
   const { state } = useLocation();
   const navigate = useNavigate();
-  const { user } = useAuth();
 
   const { cart = {}, products = [] } = state || {};
   const [localCart, setLocalCart] = useState(cart);
   const [loading, setLoading] = useState(false);
   const [success, setSuccess] = useState(false);
   const [message, setMessage] = useState('');
-  const [draftOrder, setDraftOrder] = useState(null);
-  const [paymentSession, setPaymentSession] = useState(null);
 
   const cartItems = useMemo(() => products.filter((product) => localCart[product._id]), [localCart, products]);
   const total = cartItems.reduce((sum, product) => sum + product.price * (localCart[product._id] || 0), 0);
@@ -56,8 +51,12 @@ export default function Cart() {
         throw new Error('Mercado Pago no esta configurado para cobrar este pedido.');
       }
 
-      setDraftOrder(response.order);
-      setPaymentSession(response.paymentSession);
+      if (!response.paymentSession?.checkoutUrl) {
+        throw new Error('No se pudo generar el checkout de Mercado Pago.');
+      }
+
+      window.location.assign(response.paymentSession.checkoutUrl);
+      return;
     } catch (error) {
       setMessage(error.message || 'Error al preparar el pedido.');
     } finally {
@@ -65,83 +64,66 @@ export default function Cart() {
     }
   };
 
-  const handlePayOrder = async (formData, additionalData) => {
-    const orderId = paymentSession?.orderId || draftOrder?._id;
-    if (!orderId) {
-      throw new Error('No hay un pedido listo para cobrar.');
-    }
-
-    const response = await fetchAPI(`/orders/${orderId}/pay`, {
-      method: 'POST',
-      body: JSON.stringify({ formData, additionalData }),
-    });
-
-    setDraftOrder(response.order);
-    setPaymentSession(null);
-
-    if (response.order?.status === 'completed') {
-      setSuccess(true);
-      setMessage('El pedido ya fue cobrado y confirmado.');
-      setTimeout(() => navigate('/portal'), 2200);
-      return;
-    }
-
-    setMessage('El pedido fue creado. Si el cobro queda pendiente, podras verlo luego en el historial del complejo.');
-  };
-
   if (success) {
     return (
       <div className="flex flex-col items-center justify-center py-32 text-center">
-        <CheckCircle2 size={72} className="text-green-400 mb-6" />
-        <h2 className="text-3xl font-display font-bold text-white mb-2">Pedido pagado</h2>
-        <p className="text-white/40">Redirigiendo al inicio...</p>
+        <CheckCircle2 size={72} className="mb-6 text-green-500" />
+        <h2 className="mb-2 font-display text-3xl font-bold text-on_surface">Pedido pagado</h2>
+        <p className="text-on_surface_variant">Redirigiendo al inicio...</p>
       </div>
     );
   }
 
   if (cartItems.length === 0) {
     return (
-      <div className="text-center py-32">
-        <p className="text-5xl mb-4">Carrito vacio</p>
-        <p className="text-white/40 text-lg">No hay productos pendientes para cobrar.</p>
+      <div className="py-32 text-center">
+        <p className="mb-4 text-5xl text-on_surface_variant/40">Carrito vacio</p>
+        <p className="text-lg text-on_surface_variant">No hay productos pendientes para cobrar.</p>
       </div>
     );
   }
 
   return (
-    <div className="max-w-xl mx-auto">
+    <div className="mx-auto max-w-xl">
       <button
         onClick={() => navigate(-1)}
-        className="flex items-center gap-2 text-white/40 hover:text-white text-sm mb-8 transition-colors"
+        className="mb-8 flex items-center gap-2 text-sm text-on_surface_variant transition-colors hover:text-on_surface"
       >
         <ChevronLeft size={16} />
         Seguir comprando
       </button>
-      <h1 className="text-3xl font-display font-bold text-white mb-8">Tu carrito</h1>
+      <h1 className="mb-8 font-display text-3xl font-bold text-on_surface">Tu carrito</h1>
 
       {message && (
-        <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-5 py-4 text-sm text-white/70">
+        <div className="mb-6 rounded-2xl border border-outline_variant/20 bg-surface_container_low px-5 py-4 text-sm text-on_surface_variant">
           {message}
         </div>
       )}
 
-      <div className="space-y-3 mb-8">
+      <div className="mb-6 rounded-2xl border border-primary/15 bg-primary/10 px-5 py-4">
+        <p className="flex items-start gap-3 text-sm text-on_surface">
+          <MapPin size={18} className="mt-0.5 shrink-0 text-primary" />
+          Estos productos se retiran en el complejo donde los compraste. No se realizan envios ni delivery.
+        </p>
+      </div>
+
+      <div className="mb-8 space-y-3">
         {cartItems.map((product) => (
           <div
             key={product._id}
-            className="flex items-center justify-between bg-white/5 border border-white/10 rounded-2xl px-5 py-4"
+            className="flex items-center justify-between rounded-2xl border border-outline_variant/20 bg-white px-5 py-4"
           >
             <div>
-              <p className="text-white font-medium text-sm">{product.name}</p>
-              <p className="text-white/40 text-xs mt-0.5">
+              <p className="text-sm font-medium text-on_surface">{product.name}</p>
+              <p className="mt-0.5 text-xs text-on_surface_variant">
                 x{localCart[product._id]} unidad{localCart[product._id] > 1 ? 'es' : ''}
               </p>
             </div>
             <div className="flex items-center gap-4">
-              <p className="text-primary font-semibold">{formatMoney(product.price * localCart[product._id])}</p>
+              <p className="font-semibold text-primary">{formatMoney(product.price * localCart[product._id])}</p>
               <button
                 onClick={() => remove(product._id)}
-                className="text-white/20 hover:text-error transition-colors"
+                className="text-outline transition-colors hover:text-error"
               >
                 <Trash2 size={15} />
               </button>
@@ -150,43 +132,21 @@ export default function Cart() {
         ))}
       </div>
 
-      <div className="bg-white/5 border border-white/10 rounded-2xl p-6">
-        <div className="flex justify-between text-base font-semibold text-white mb-5">
+      <div className="rounded-2xl border border-outline_variant/20 bg-white p-6 shadow-[0_18px_38px_-26px_rgba(24,36,24,0.18)]">
+        <div className="mb-5 flex justify-between text-base font-semibold text-on_surface">
           <span>Total</span>
-          <span className="text-primary text-xl">{formatMoney(total)}</span>
+          <span className="text-xl text-primary">{formatMoney(total)}</span>
         </div>
 
         <button
           onClick={handleCheckout}
           disabled={loading}
-          className="w-full bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-bold py-4 rounded-2xl hover:brightness-110 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+          className="flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-primary_container to-primary py-4 font-bold text-on_primary transition-all hover:brightness-110 disabled:opacity-50"
         >
           {loading ? <Loader2 className="animate-spin" size={18} /> : null}
           {loading ? 'Preparando pago...' : 'Pagar pedido'}
         </button>
-
-        {draftOrder && (
-          <div className="mt-4 rounded-2xl bg-white/5 px-4 py-3 text-sm text-white/60">
-            Pedido local: <span className="text-white">{draftOrder._id}</span>
-          </div>
-        )}
       </div>
-
-      <MercadoPagoCardModal
-        open={Boolean(paymentSession)}
-        title="Pagar pedido del ecommerce"
-        subtitle="El cobro se procesa con Mercado Pago Orders API y queda vinculado al complejo correspondiente."
-        amount={Number(paymentSession?.amount || total)}
-        currency={paymentSession?.currency || 'ARS'}
-        payerEmail={paymentSession?.payer?.email || user?.email || ''}
-        publicKey={paymentSession?.publicKey || ''}
-        allowPayerEmailEdit
-        payerEmailHelpText="Si estas probando en sandbox, usa el email de un comprador de prueba de Mercado Pago."
-        submitLabel="pedido"
-        maxInstallments={3}
-        onClose={() => setPaymentSession(null)}
-        onSubmit={handlePayOrder}
-      />
     </div>
   );
 }

@@ -72,7 +72,7 @@ export default function Dashboard() {
 
         <Link
           to="/dashboard/reservations"
-          className="w-full sm:w-auto justify-center bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-semibold px-6 py-3 rounded-2xl flex items-center gap-2 shadow-[0_8px_30px_-10px_rgba(23,101,242,0.5)] hover:brightness-110 hover:scale-[1.02] transition-all"
+          className="w-full sm:w-auto justify-center bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-semibold px-6 py-3 rounded-2xl flex items-center gap-2 shadow-[0_8px_30px_-10px_rgba(47,172,76,0.42)] hover:brightness-110 hover:scale-[1.02] transition-all"
         >
           <Plus size={20} /> Nueva Reserva
         </Link>
@@ -112,7 +112,7 @@ export default function Dashboard() {
             </div>
             <div className="w-full bg-surface_container_highest h-2 rounded-full overflow-hidden">
               <div
-                className="bg-primary h-full rounded-full shadow-[0_0_10px_rgba(179,197,255,0.8)] transition-all"
+                className="bg-primary h-full rounded-full shadow-[0_0_10px_rgba(158,240,107,0.58)] transition-all"
                 style={{ width: `${courts.occupancyRate}%` }}
               />
             </div>

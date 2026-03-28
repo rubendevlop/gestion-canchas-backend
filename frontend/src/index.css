@@ -5,34 +5,84 @@
 @tailwind utilities;
 
 @layer base {
+  :root {
+    --color-primary: #1f8f49;
+    --color-secondary: #c98a19;
+  }
+
+  html {
+    background: #f3f7ee;
+  }
+
   body {
     @apply bg-background text-on_surface font-inter antialiased;
+    position: relative;
+    min-height: 100vh;
+    isolation: isolate;
+    color-scheme: light;
+    line-height: 1.5;
+    background-image:
+      radial-gradient(circle at top left, rgba(114, 203, 84, 0.16), transparent 32%),
+      radial-gradient(circle at top right, rgba(201, 138, 25, 0.11), transparent 26%),
+      linear-gradient(180deg, #fbfdf8 0%, #f3f7ee 54%, #edf4e6 100%);
+    background-attachment: fixed;
   }
-  
+
+  body::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    pointer-events: none;
+    z-index: 0;
+    opacity: 0.34;
+    background:
+      radial-gradient(circle at center, rgba(255, 255, 255, 0.72), transparent 62%),
+      repeating-linear-gradient(
+        90deg,
+        transparent 0,
+        transparent 118px,
+        rgba(82, 103, 79, 0.018) 118px,
+        rgba(82, 103, 79, 0.018) 236px
+      );
+  }
+
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  #root {
+    position: relative;
+    z-index: 1;
+  }
+
   h1, h2, h3, h4, h5, h6 {
     @apply font-manrope font-semibold tracking-tight;
+  }
+
+  ::selection {
+    background: rgba(123, 207, 82, 0.26);
+    color: #132414;
   }
 }
 
 @layer components {
-  /* Minimalismo de Capas Infinitas */
   .glass-panel {
-    @apply bg-surface_container/70 backdrop-blur-xl border border-outline_variant/15;
+    @apply bg-white/94 backdrop-blur-xl border border-outline_variant/55 shadow-[0_20px_48px_-34px_rgba(31,143,73,0.24)];
   }
 
   .btn-primary {
-    @apply bg-primary-gradient text-[#001849] px-6 py-3 rounded-2xl font-semibold shadow-lg shadow-primary_container/20 transition-all duration-300 hover:scale-[1.02] hover:shadow-primary_container/40;
+    @apply bg-primary-gradient text-on_primary px-6 py-3 rounded-2xl font-semibold shadow-[0_16px_34px_-18px_rgba(31,143,73,0.34)] transition-all duration-300 hover:scale-[1.02] hover:shadow-[0_20px_40px_-20px_rgba(31,143,73,0.4)];
   }
 
   .btn-secondary {
-    @apply bg-surface_container_highest text-on_surface px-6 py-3 rounded-2xl font-medium transition-all duration-300 hover:bg-surface_bright;
+    @apply bg-white text-on_surface px-6 py-3 rounded-2xl font-medium border border-outline_variant/50 shadow-[0_12px_30px_-24px_rgba(24,36,24,0.18)] transition-all duration-300 hover:bg-surface_container_low;
   }
-  
+
   .card {
-    @apply bg-surface_container_high rounded-3xl p-6 border border-outline_variant/10;
+    @apply bg-white/95 rounded-3xl p-6 border border-outline_variant/40 shadow-[0_18px_44px_-30px_rgba(24,36,24,0.18)];
   }
 
   .input-field {
-    @apply bg-surface_container_low w-full text-on_surface placeholder-on_surface_variant rounded-xl px-4 py-3 border border-transparent focus:border-primary/30 focus:shadow-[0_0_15px_rgba(180,197,255,0.1)] outline-none transition-all duration-300;
+    @apply bg-white w-full text-on_surface placeholder-on_surface_variant rounded-xl px-4 py-3 border border-outline_variant/45 focus:border-primary/45 focus:shadow-[0_0_0_4px_rgba(114,203,84,0.14)] outline-none transition-all duration-300;
   }
 }

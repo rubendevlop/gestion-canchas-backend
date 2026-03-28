@@ -22,7 +22,7 @@ const ROLES = ['client', 'owner', 'superadmin'];
 const ROLE_STYLE = {
   superadmin: { label: 'Super Admin', cls: 'bg-purple-400/15 text-purple-300 border border-purple-400/20' },
   owner: { label: 'Owner', cls: 'bg-primary/15 text-primary border border-primary/20' },
-  client: { label: 'Cliente', cls: 'bg-white/10 text-white/70 border border-white/10' },
+  client: { label: 'Cliente', cls: 'bg-surface_container_low text-on_surface_variant border border-outline_variant/20' },
 };
 
 const OWNER_STATUS_STYLE = {
@@ -481,6 +481,36 @@ function DirectoryUserCard({ user, updating, onApprove, onReject, onRoleChange }
       {user.role === 'owner' && (
         <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
           <InfoPanel
+            title="Solicitud owner"
+            rows={[
+              { label: 'Responsable', value: user.ownerApplication?.fullName || '-' },
+              { label: 'Telefono', value: user.ownerApplication?.contactPhone || user.phone || '-' },
+              { label: 'Documento', value: `${user.ownerApplication?.documentType || '-'} ${user.ownerApplication?.documentNumber || ''}`.trim() },
+              { label: 'Complejo', value: user.ownerApplication?.complexName || '-' },
+              { label: 'Ciudad', value: user.ownerApplication?.city || '-' },
+              { label: 'Canchas', value: user.ownerApplication?.courtsCount || 0 },
+            ]}
+            footer={
+              user.ownerApplication?.websiteOrInstagram || user.ownerApplication?.notes ? (
+                <div className="mt-3 space-y-2 text-sm text-on_surface_variant">
+                  {user.ownerApplication?.websiteOrInstagram ? (
+                    <p>
+                      <span className="text-outline">Web / Instagram:</span>{' '}
+                      {user.ownerApplication.websiteOrInstagram}
+                    </p>
+                  ) : null}
+                  {user.ownerApplication?.notes ? (
+                    <p>
+                      <span className="text-outline">Notas:</span>{' '}
+                      {user.ownerApplication.notes}
+                    </p>
+                  ) : null}
+                </div>
+              ) : null
+            }
+          />
+
+          <InfoPanel
             title="Facturacion owner"
             rows={[
               { label: 'Estado', value: billingMeta.label },
@@ -648,6 +678,8 @@ function InfoPanel({ title, rows, footer = null }) {
 }
 
 function OwnerRequestCard({ user, updating, onApprove, onReject }) {
+  const application = user.ownerApplication || {};
+
   return (
     <div className="bg-surface_container_low border border-yellow-400/15 rounded-2xl p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
       <div className="relative shrink-0">
@@ -669,6 +701,28 @@ function OwnerRequestCard({ user, updating, onApprove, onReject }) {
         <p className="text-yellow-400/70 text-xs mt-1">
           Solicito ser owner · {formatDate(user.createdAt)}
         </p>
+        <div className="mt-3 grid gap-2 text-sm text-on_surface_variant sm:grid-cols-2">
+          <p><span className="text-outline">Responsable:</span> {application.fullName || '-'}</p>
+          <p><span className="text-outline">Telefono:</span> {application.contactPhone || user.phone || '-'}</p>
+          <p><span className="text-outline">Complejo:</span> {application.complexName || '-'}</p>
+          <p><span className="text-outline">Ciudad:</span> {application.city || '-'}</p>
+          <p><span className="text-outline">Documento:</span> {`${application.documentType || '-'} ${application.documentNumber || ''}`.trim()}</p>
+          <p><span className="text-outline">Canchas:</span> {application.courtsCount || 0}</p>
+        </div>
+        {(application.websiteOrInstagram || application.notes) && (
+          <div className="mt-3 rounded-2xl bg-surface_container px-4 py-3 text-sm text-on_surface_variant">
+            {application.websiteOrInstagram ? (
+              <p>
+                <span className="text-outline">Web / Instagram:</span> {application.websiteOrInstagram}
+              </p>
+            ) : null}
+            {application.notes ? (
+              <p className="mt-1">
+                <span className="text-outline">Notas:</span> {application.notes}
+              </p>
+            ) : null}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2 shrink-0 w-full sm:w-auto">

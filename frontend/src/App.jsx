@@ -26,6 +26,8 @@ import BookCourt from './pages/portal/BookCourt';
 import ComplexStore from './pages/portal/ComplexStore';
 import Cart from './pages/portal/Cart';
 import MyReservations from './pages/portal/MyReservations';
+import MyOrders from './pages/portal/MyOrders';
+import PortalPaymentResult from './pages/portal/PortalPaymentResult';
 import PortalProfile from './pages/portal/PortalProfile';
 
 function LoginGuard({ children }) {
@@ -172,9 +174,11 @@ function AppRoutes() {
         <Route path="complejo/:complexId/reservar" element={<BookCourt />} />
         <Route path="complejo/:complexId/tienda" element={<ComplexStore />} />
         <Route path="complejo/:complexId/tienda/carrito" element={<Cart />} />
+        <Route path="pago/mercadopago" element={<PortalPaymentResult />} />
 
         {/* Área personal del cliente */}
         <Route path="mis-reservas" element={<MyReservations />} />
+        <Route path="mis-compras" element={<MyOrders />} />
         <Route path="perfil" element={<PortalProfile />} />
       </Route>
 

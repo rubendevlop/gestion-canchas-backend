@@ -9,6 +9,7 @@ import {
   Loader2,
   RefreshCw,
   Search,
+  ShieldCheck,
   ShoppingBag,
 } from 'lucide-react';
 
@@ -30,6 +31,7 @@ const RESERVATION_PAYMENT_STYLE = {
   UNPAID: { label: 'Sin cobrar', cls: 'bg-red-400/10 text-red-400 border border-red-400/20' },
   PARTIAL: { label: 'Parcial', cls: 'bg-yellow-400/10 text-yellow-400 border border-yellow-400/20' },
   PAID: { label: 'Pagada', cls: 'bg-green-400/10 text-green-400 border border-green-400/20' },
+  REFUNDED: { label: 'Reembolsada', cls: 'bg-sky-400/10 text-sky-400 border border-sky-400/20' },
 };
 
 const ORDER_STATUS_STYLE = {
@@ -77,6 +79,8 @@ export default function AdminPayments() {
   const [tab, setTab] = useState('owner');
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('ALL');
+  const [approvingId, setApprovingId] = useState(null);
+  const [approveMessage, setApproveMessage] = useState('');
 
   const loadData = async () => {
     setLoading(true);
@@ -100,6 +104,20 @@ export default function AdminPayments() {
       setReservations([]);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleApproveInvoice = async (invoiceId) => {
+    setApprovingId(invoiceId);
+    setApproveMessage('');
+    try {
+      const response = await fetchAPI(`/owner-billing/admin/invoices/${invoiceId}/approve`, { method: 'PATCH' });
+      setApproveMessage(response.message || 'Factura aprobada correctamente.');
+      await loadData();
+    } catch (error) {
+      setApproveMessage(error.message || 'Error al aprobar la factura.');
+    } finally {
+      setApprovingId(null);
     }
   };
 
@@ -360,6 +378,7 @@ export default function AdminPayments() {
                 <option value="UNPAID">Sin cobrar</option>
                 <option value="PARTIAL">Parcial</option>
                 <option value="PAID">Pagada</option>
+                <option value="REFUNDED">Reembolsada</option>
               </>
             )}
             {tab === 'orders' && (
@@ -415,12 +434,20 @@ export default function AdminPayments() {
 
             <div>
               <h3 className="text-lg font-display font-medium text-on_surface mb-3">Historial de mensualidades</h3>
+
+              {approveMessage && (
+                <div className="mb-4 rounded-2xl border border-green-400/20 bg-green-400/5 px-4 py-3 text-sm text-green-400">
+                  {approveMessage}
+                </div>
+              )}
+
               {filteredInvoices.length === 0 ? (
                 <EmptyState message="No hay facturas owner que coincidan con esos filtros." />
               ) : (
                 <div className="space-y-3">
                   {filteredInvoices.map((invoice) => {
                     const invoiceMeta = INVOICE_STATUS_STYLE[invoice.status] || INVOICE_STATUS_STYLE.CANCELLED;
+                    const isApproving = approvingId === invoice.id;
                     return (
                       <article key={invoice.id} className="rounded-[1.5rem] border border-outline_variant/10 bg-surface_container_low p-5">
                         <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
@@ -437,11 +464,25 @@ export default function AdminPayments() {
                             </p>
                           </div>
 
-                          <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 lg:min-w-[520px]">
-                            <MiniStat label="Importe" value={formatMoney(invoice.amount, invoice.currency)} />
-                            <MiniStat label="Vence" value={formatDate(invoice.dueDate)} />
-                            <MiniStat label="Pago" value={formatDate(invoice.paidAt)} />
-                            <MiniStat label="Creada" value={formatDate(invoice.createdAt)} />
+                          <div className="flex flex-col gap-3 lg:min-w-[520px]">
+                            <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
+                              <MiniStat label="Importe" value={formatMoney(invoice.amount, invoice.currency)} />
+                              <MiniStat label="Vence" value={formatDate(invoice.dueDate)} />
+                              <MiniStat label="Pago" value={formatDate(invoice.paidAt)} />
+                              <MiniStat label="Creada" value={formatDate(invoice.createdAt)} />
+                            </div>
+
+                            {invoice.status !== 'PAID' && (
+                              <button
+                                type="button"
+                                disabled={isApproving}
+                                onClick={() => handleApproveInvoice(invoice.id)}
+                                className="inline-flex items-center justify-center gap-2 rounded-2xl bg-green-400/10 border border-green-400/20 text-green-400 px-4 py-2.5 text-sm font-semibold hover:bg-green-400/20 transition-colors disabled:opacity-50"
+                              >
+                                {isApproving ? <Loader2 size={15} className="animate-spin" /> : <ShieldCheck size={15} />}
+                                {isApproving ? 'Aprobando...' : 'Aprobar manualmente'}
+                              </button>
+                            )}
                           </div>
                         </div>
                       </article>

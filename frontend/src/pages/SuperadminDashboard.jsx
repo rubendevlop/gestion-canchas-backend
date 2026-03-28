@@ -94,7 +94,7 @@ export default function SuperadminDashboard() {
         </div>
         <Link
           to="/dashboard/users"
-          className="w-full sm:w-auto justify-center bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-semibold px-6 py-3 rounded-2xl flex items-center gap-2 shadow-[0_8px_30px_-10px_rgba(23,101,242,0.5)] hover:brightness-110 hover:scale-[1.02] transition-all"
+          className="w-full sm:w-auto justify-center bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-semibold px-6 py-3 rounded-2xl flex items-center gap-2 shadow-[0_8px_30px_-10px_rgba(47,172,76,0.42)] hover:brightness-110 hover:scale-[1.02] transition-all"
         >
           Revisar validaciones <ArrowRight size={18} />
         </Link>

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CardPayment } from '@mercadopago/sdk-react';
-import { CreditCard, Loader2, ShieldAlert, X } from 'lucide-react';
+import { CreditCard, Loader2, X } from 'lucide-react';
 import { ensureMercadoPago, getMercadoPagoPublicKey, isMercadoPagoConfigured } from '../lib/mercadoPago';
 
 function formatMoney(amount, currency = 'ARS') {
@@ -69,7 +69,7 @@ export default function MercadoPagoCardModal({
       <div className="max-h-[92vh] w-full max-w-2xl overflow-y-auto rounded-[1.75rem] border border-outline_variant/15 bg-surface_container_low p-6 shadow-2xl sm:p-8">
         <div className="mb-6 flex items-start justify-between gap-4">
           <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-outline mb-2">Mercado Pago Orders</p>
+
             <h3 className="text-2xl font-display font-semibold text-on_surface">{title}</h3>
             {subtitle && <p className="mt-2 text-sm text-on_surface_variant">{subtitle}</p>}
           </div>
@@ -92,23 +92,10 @@ export default function MercadoPagoCardModal({
               <p className="text-2xl font-display font-semibold text-on_surface">{formatMoney(amount, currency)}</p>
             </div>
           </div>
-          <div className="mt-4 grid gap-2 text-sm text-on_surface_variant sm:grid-cols-2">
-            <p>Checkout embebido con Orders API.</p>
-            <p className="break-all">Comprador: {payerEmailValue || 'Sin email'}</p>
-          </div>
+
         </div>
 
-        {!initialized && (
-          <div className="rounded-[1.5rem] border border-yellow-400/15 bg-yellow-400/5 px-5 py-4">
-            <p className="flex items-center gap-2 text-sm font-medium text-yellow-400">
-              <ShieldAlert size={16} />
-              Falta `VITE_MERCADOPAGO_PUBLIC_KEY` en el frontend.
-            </p>
-            <p className="mt-2 text-sm text-on_surface_variant">
-              La clave publica de Mercado Pago se inicializa desde el frontend para poder renderizar el Brick.
-            </p>
-          </div>
-        )}
+
 
         {errorMessage && (
           <div className="mb-5 rounded-[1.5rem] border border-red-400/15 bg-red-400/5 px-5 py-4 text-sm text-red-400">
@@ -121,7 +108,7 @@ export default function MercadoPagoCardModal({
             {allowPayerEmailEdit && (
               <div className="mb-5">
                 <label className="mb-2 block text-sm font-medium text-on_surface" htmlFor="mercadopago-payer-email">
-                  Email del comprador
+                  Email de facturación
                 </label>
                 <input
                   id="mercadopago-payer-email"
@@ -129,12 +116,14 @@ export default function MercadoPagoCardModal({
                   autoComplete="email"
                   value={payerEmailValue}
                   onChange={(event) => setPayerEmailValue(event.target.value)}
-                  placeholder="comprador@testuser.com"
+                  placeholder="tu@email.com"
                   className="w-full rounded-2xl border border-outline_variant/15 bg-surface_container_low px-4 py-3 text-sm text-on_surface outline-none transition-colors focus:border-primary"
                 />
-                <p className="mt-2 text-xs text-outline">
-                  {payerEmailHelpText || 'En pruebas, usa el email de un comprador de prueba generado en Mercado Pago.'}
-                </p>
+                {payerEmailHelpText && (
+                  <p className="mt-2 text-xs leading-relaxed text-on_surface_variant">
+                    {payerEmailHelpText}
+                  </p>
+                )}
               </div>
             )}
 
@@ -190,11 +179,7 @@ export default function MercadoPagoCardModal({
               }}
             />
 
-            <div className="mt-4 text-xs text-outline">
-              {submitting
-                ? `Procesando ${submitLabel.toLowerCase()}...`
-                : `El boton del formulario enviara ${submitLabel.toLowerCase()} usando la clave publica ${resolvedPublicKey ? 'configurada' : 'faltante'}.`}
-            </div>
+
           </div>
         )}
       </div>

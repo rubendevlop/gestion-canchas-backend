@@ -1,8 +1,6 @@
 import { auth } from '../firebase';
 
-const API_URL =
-  import.meta.env.VITE_API_URL ||
-  (import.meta.env.DEV ? 'http://localhost:5000/api' : '/api');
+const API_URL = import.meta.env.VITE_API_URL;
 
 export const fetchAPI = async (endpoint, options = {}) => {
   let token = null;
@@ -24,10 +22,7 @@ export const fetchAPI = async (endpoint, options = {}) => {
   const data = await response.json().catch(() => ({}));
 
   if (!response.ok) {
-    const error = new Error(data.message || data.error || `Error HTTP: ${response.status}`);
-    error.status = response.status;
-    error.payload = data;
-    throw error;
+    throw new Error(data.error || data.message || data.detail || `Error HTTP: ${response.status}`);
   }
 
   return data;

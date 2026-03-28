@@ -23,7 +23,17 @@ export function AuthProvider({ children }) {
   const [loading, setLoading] = useState(true);
 
   const applyProfile = (profile, currentUser) => {
-    setUser(currentUser);
+    setUser(
+      currentUser
+        ? {
+            ...currentUser,
+            displayName: profile.displayName ?? currentUser.displayName ?? '',
+            email: profile.email ?? currentUser.email ?? '',
+            photoURL: profile.photoURL ?? currentUser.photoURL ?? '',
+            phone: profile.phone ?? '',
+          }
+        : null,
+    );
     setRole(profile.role);
     setOwnerStatus(profile.ownerStatus ?? null);
     setOwnerStatusNote(profile.ownerStatusNote ?? '');

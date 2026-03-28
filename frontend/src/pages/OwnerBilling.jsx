@@ -259,7 +259,7 @@ export default function OwnerBilling() {
             type="button"
             onClick={handleCheckout}
             disabled={checkoutLoading || !billing?.providerConfigured}
-            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-semibold px-5 py-3 rounded-2xl shadow-[0_8px_30px_-10px_rgba(23,101,242,0.45)] hover:brightness-110 transition-all disabled:opacity-50"
+            className="w-full sm:w-auto inline-flex items-center justify-center gap-2 bg-gradient-to-r from-primary_container to-primary text-on_primary_fixed font-semibold px-5 py-3 rounded-2xl shadow-[0_8px_30px_-10px_rgba(47,172,76,0.42)] hover:brightness-110 transition-all disabled:opacity-50"
           >
             {checkoutLoading ? <Loader2 size={18} className="animate-spin" /> : <CreditCard size={18} />}
             {checkoutLoading ? 'Preparando pago...' : primaryActionLabel}
@@ -459,11 +459,12 @@ export default function OwnerBilling() {
       <MercadoPagoCardModal
         open={Boolean(paymentSession)}
         title="Completar mensualidad"
-        subtitle="El cobro se procesa con Mercado Pago Orders API desde el mismo panel."
+
         amount={Number(paymentSession?.amount || billing?.amount || 0)}
         currency={paymentSession?.currency || billing?.currency || 'ARS'}
         payerEmail={paymentSession?.payer?.email || user?.email || ''}
-        allowPayerEmailEdit
+        publicKey={paymentSession?.publicKey || ''}
+        allowPayerEmailEdit={!paymentSession?.payer?.usesConfiguredTestEmail}
         payerEmailHelpText="Si estas usando credenciales de prueba, carga el email de un comprador de prueba de Mercado Pago. No uses tu email real."
         submitLabel="mensualidad"
         onClose={() => setPaymentSession(null)}

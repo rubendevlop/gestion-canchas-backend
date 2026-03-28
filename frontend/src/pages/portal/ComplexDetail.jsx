@@ -34,21 +34,21 @@ export default function ComplexDetail() {
   }
 
   if (!complex) {
-    return <div className="py-20 text-center text-white/40">{errorMessage || 'Complejo no encontrado.'}</div>;
+    return <div className="py-20 text-center text-on_surface_variant/70">{errorMessage || 'Complejo no encontrado.'}</div>;
   }
 
   return (
     <div>
-      <div className="relative mb-8 flex h-64 items-center justify-center overflow-hidden rounded-3xl bg-gradient-to-br from-primary/20 to-primary_container/30">
+      <div className="relative mb-8 flex h-64 items-center justify-center overflow-hidden rounded-3xl border border-outline_variant/20 bg-gradient-to-br from-white via-surface_container_low to-secondary/10 shadow-[0_24px_70px_-42px_rgba(24,36,24,0.18)]">
         {complex.imageUrl ? (
           <img src={complex.imageUrl} alt={complex.name} className="h-full w-full object-cover" />
         ) : (
           <span className="text-8xl">Futbol</span>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-black/80 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-white/92 via-white/55 to-transparent" />
         <div className="absolute bottom-0 left-0 p-8">
-          <h1 className="mb-2 text-4xl font-display font-bold text-white">{complex.name}</h1>
-          <div className="flex flex-wrap items-center gap-4 text-sm text-white/60">
+          <h1 className="mb-2 text-4xl font-display font-bold text-on_surface">{complex.name}</h1>
+          <div className="flex flex-wrap items-center gap-4 text-sm text-on_surface_variant">
             <span className="flex items-center gap-1.5">
               <MapPin size={14} />
               {complex.address || 'Buenos Aires'}
@@ -68,14 +68,14 @@ export default function ComplexDetail() {
       <div className="mb-10 grid grid-cols-2 gap-4">
         <Link
           to={`/portal/complejo/${complexId}/reservar`}
-          className="flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-primary_container to-primary py-5 text-lg font-semibold text-on_primary_fixed shadow-[0_8px_30px_-10px_rgba(23,101,242,0.5)] transition-all hover:scale-[1.01] hover:brightness-110"
+          className="flex items-center justify-center gap-3 rounded-2xl bg-gradient-to-r from-primary_container to-primary py-5 text-lg font-semibold text-on_primary shadow-[0_10px_28px_-12px_rgba(47,158,68,0.34)] transition-all hover:scale-[1.01] hover:brightness-110"
         >
           <CalendarRange size={22} />
           Reservar cancha
         </Link>
         <Link
           to={`/portal/complejo/${complexId}/tienda`}
-          className="flex items-center justify-center gap-3 rounded-2xl border border-white/15 bg-white/5 py-5 text-lg font-semibold text-white transition-all hover:bg-white/10"
+          className="flex items-center justify-center gap-3 rounded-2xl border border-outline_variant/25 bg-white py-5 text-lg font-semibold text-on_surface transition-all hover:bg-surface_container_low"
         >
           <ShoppingBag size={22} />
           Ver tienda
@@ -83,7 +83,7 @@ export default function ComplexDetail() {
       </div>
 
       <section>
-        <h2 className="mb-5 text-2xl font-display font-semibold text-white">Canchas disponibles</h2>
+        <h2 className="mb-5 text-2xl font-display font-semibold text-on_surface">Canchas disponibles</h2>
         <div className="space-y-4">
           {courts.map((court) => {
             const imageUrl = court.imageUrl || court.image || court.images?.[0] || '';
@@ -92,22 +92,22 @@ export default function ComplexDetail() {
               <Link
                 key={court._id}
                 to={`/portal/complejo/${complexId}/reservar?courtId=${court._id}`}
-                className="group grid overflow-hidden rounded-2xl border border-white/10 bg-white/5 transition-all hover:border-primary/30 hover:bg-white/10 md:grid-cols-[220px_minmax(0,1fr)]"
+                className="group grid overflow-hidden rounded-2xl border border-outline_variant/20 bg-white transition-all hover:border-primary/30 hover:bg-surface_container_low md:grid-cols-[220px_minmax(0,1fr)]"
               >
-                <div className="h-44 bg-gradient-to-br from-white/5 to-white/10 md:h-full">
+                <div className="h-44 bg-gradient-to-br from-surface_container to-surface_container_high md:h-full">
                   {imageUrl ? (
                     <img src={imageUrl} alt={court.name} className="h-full w-full object-cover" />
                   ) : (
-                    <div className="flex h-full items-center justify-center text-5xl text-white/20">Cancha</div>
+                    <div className="flex h-full items-center justify-center text-5xl text-on_surface_variant/25">Cancha</div>
                   )}
                 </div>
 
                 <div className="flex items-center justify-between gap-6 px-6 py-5">
                   <div className="min-w-0">
-                    <p className="text-base font-medium text-white">{court.name}</p>
-                    <p className="mt-1 text-sm text-white/40">{court.sport || 'Futbol 5'}</p>
+                    <p className="text-base font-medium text-on_surface">{court.name}</p>
+                    <p className="mt-1 text-sm text-on_surface_variant">{court.sport || 'Futbol 5'}</p>
                     {court.description && (
-                      <p className="mt-3 text-sm text-white/55">{court.description}</p>
+                      <p className="mt-3 text-sm text-on_surface_variant/85">{court.description}</p>
                     )}
                   </div>
 
@@ -115,7 +115,7 @@ export default function ComplexDetail() {
                     <div className="text-right">
                       <p className="font-semibold text-primary">
                         ${court.pricePerHour?.toLocaleString('es-AR')}
-                        <span className="text-xs font-normal text-white/30">/hr</span>
+                        <span className="text-xs font-normal text-on_surface_variant/65">/hr</span>
                       </p>
                       <span
                         className={`mt-2 inline-flex rounded-full px-2.5 py-0.5 text-xs font-medium ${
@@ -127,7 +127,7 @@ export default function ComplexDetail() {
                         {court.isAvailable !== false ? 'Disponible' : 'No disponible'}
                       </span>
                     </div>
-                    <ChevronRight size={18} className="text-white/20 transition-colors group-hover:text-primary" />
+                    <ChevronRight size={18} className="text-on_surface_variant/45 transition-colors group-hover:text-primary" />
                   </div>
                 </div>
               </Link>
@@ -135,7 +135,7 @@ export default function ComplexDetail() {
           })}
 
           {courts.length === 0 && (
-            <p className="py-10 text-center text-white/30">Este complejo no tiene canchas cargadas aun.</p>
+            <p className="py-10 text-center text-on_surface_variant/60">Este complejo no tiene canchas cargadas aun.</p>
           )}
         </div>
       </section>
