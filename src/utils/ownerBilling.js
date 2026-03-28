@@ -18,9 +18,9 @@ import {
   isPendingMercadoPagoOrder,
 } from './mercadoPago.js';
 
-const DEFAULT_AMOUNT_ARS = 30000;
+const DEFAULT_AMOUNT_ARS = 35000;
 const DEFAULT_CURRENCY = 'ARS';
-const DEFAULT_GRACE_DAYS = 10;
+const DEFAULT_GRACE_DAYS = 3;
 const DEFAULT_BILLING_MONTHS = 1;
 
 function addMonths(date, months) {

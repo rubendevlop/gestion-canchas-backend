@@ -26,11 +26,11 @@ function isPublicHttpUrl(value = '') {
 }
 
 export function getFrontendUrl() {
-  return normalizeUrl(process.env.FRONTEND_URL || process.env.APP_URL, 'http://localhost:5173');
+  return normalizeUrl(process.env.FRONTEND_URL || process.env.APP_URL, 'https://clubestucuman.ar');
 }
 
 export function getBackendUrl() {
-  return normalizeUrl(process.env.BACKEND_PUBLIC_URL || process.env.API_URL, 'http://localhost:5000').replace(/\/api$/, '');
+  return normalizeUrl(process.env.BACKEND_PUBLIC_URL || process.env.API_URL, 'https://gestioncanchaskboomdev.vercel.app').replace(/\/api$/, '');
 }
 
 export function getMercadoPagoPublicKey() {
@@ -102,10 +102,10 @@ function sanitizeMercadoPagoBodyForLog(body) {
       })),
       back_urls: parsed?.back_urls
         ? {
-            hasSuccess: Boolean(parsed?.back_urls?.success),
-            hasPending: Boolean(parsed?.back_urls?.pending),
-            hasFailure: Boolean(parsed?.back_urls?.failure),
-          }
+          hasSuccess: Boolean(parsed?.back_urls?.success),
+          hasPending: Boolean(parsed?.back_urls?.pending),
+          hasFailure: Boolean(parsed?.back_urls?.failure),
+        }
         : undefined,
       hasNotificationUrl: Boolean(parsed?.notification_url),
       transactions: {
@@ -173,9 +173,9 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
         error: data.error || '',
         cause: Array.isArray(data.cause)
           ? data.cause.map((cause) => ({
-              code: cause?.code,
-              description: cause?.description,
-            }))
+            code: cause?.code,
+            description: cause?.description,
+          }))
           : [],
         raw: !data.message && !data.error && !Array.isArray(data.cause) ? rawResponseSnippet : '',
       },
@@ -183,10 +183,10 @@ export async function mercadopagoRequest(path, options = {}, requestOptions = {}
 
     const error = new Error(
       causeDescription ||
-        data.message ||
-        data.error ||
-        rawResponseSnippet ||
-        'Mercado Pago rechazo la operacion.',
+      data.message ||
+      data.error ||
+      rawResponseSnippet ||
+      'Mercado Pago rechazo la operacion.',
     );
     error.status = response.status;
     error.payload = data;
