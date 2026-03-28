@@ -6,16 +6,25 @@ import {
   sendOwnerBillingPaidEmail,
 } from './emailNotifications.js';
 import {
+  buildWebhookUrl,
+  createCheckoutPreference,
   createAutomaticMercadoPagoOrder,
-  extractMercadoPagoOrderId,
+  extractMercadoPagoPaymentId as extractMercadoPagoWebhookPaymentId,
+  getFrontendUrl,
+  getMercadoPagoPayment,
+  getMercadoPagoPaymentSnapshot,
   getMercadoPagoPublicKey,
   getMercadoPagoOrder,
   getMercadoPagoOrderSnapshot,
   isApprovedMercadoPagoOrder,
+  isApprovedMercadoPagoPayment,
   isCancelledMercadoPagoOrder,
+  isCancelledMercadoPagoPayment,
   isFailedMercadoPagoOrder,
+  isFailedMercadoPagoPayment,
   isMercadoPagoConfigured,
   isPendingMercadoPagoOrder,
+  isPendingMercadoPagoPayment,
 } from './mercadoPago.js';
 
 const DEFAULT_AMOUNT_ARS = 35000;
@@ -93,6 +102,28 @@ function buildInvoiceDescription(owner) {
   return `Acceso mensual Clubes Tucumán - ${owner.displayName || owner.email}`;
 }
 
+function buildOwnerBillingReturnUrl(invoice, result = 'pending') {
+  const url = new URL('/dashboard/billing/resultado', `${getFrontendUrl()}/`);
+  url.searchParams.set('invoiceId', String(invoice._id));
+  url.searchParams.set('result', String(result || 'pending'));
+  return url.toString();
+}
+
+function buildOwnerBillingNotificationUrl(invoice) {
+  const baseUrl = buildWebhookUrl('/api/owner-billing/webhook/mercadopago');
+  if (!baseUrl) {
+    return '';
+  }
+
+  const url = new URL(baseUrl);
+  url.searchParams.set('invoiceId', String(invoice._id));
+  return url.toString();
+}
+
+function resolveOwnerBillingCheckoutUrl(preference) {
+  return String(preference?.sandbox_init_point || preference?.init_point || '').trim();
+}
+
 function getInvoiceBlockAt(invoice) {
   return invoice?.dueDate ? new Date(invoice.dueDate) : null;
 }
@@ -117,6 +148,8 @@ function serializeInvoice(invoice) {
     paymentId: invoice.mercadoPagoPaymentId || '',
     paymentStatus: invoice.mercadoPagoStatus || '',
     paymentStatusDetail: invoice.mercadoPagoStatusDetail || '',
+    preferenceId: invoice.mercadoPagoPreferenceId || '',
+    checkoutUrl: invoice.checkoutUrl || invoice.checkoutSandboxUrl || '',
     mercadoPagoOrderId: invoice.mercadoPagoOrderId || '',
     mercadoPagoOrderStatus: invoice.mercadoPagoOrderStatus || '',
     mercadoPagoOrderStatusDetail: invoice.mercadoPagoOrderStatusDetail || '',
@@ -176,7 +209,7 @@ async function createPendingInvoice(owner, dueDate) {
   return invoice;
 }
 
-function getOwnerPaymentSession(invoice, owner, requestedPayerEmail = '') {
+function getOwnerCardPaymentSession(invoice, owner, requestedPayerEmail = '') {
   const payer = resolveOwnerBillingPayer(owner, requestedPayerEmail);
 
   return {
@@ -186,6 +219,27 @@ function getOwnerPaymentSession(invoice, owner, requestedPayerEmail = '') {
     currency: invoice.currency,
     publicKey: getMercadoPagoPublicKey(),
     invoiceId: invoice._id,
+    description: buildInvoiceDescription(owner),
+    payer: {
+      email: payer.email,
+      usesConfiguredTestEmail: payer.usesConfiguredTestEmail,
+    },
+  };
+}
+
+function getOwnerCheckoutPaymentSession(invoice, owner, requestedPayerEmail = '', checkout = {}) {
+  const payer = resolveOwnerBillingPayer(owner, requestedPayerEmail);
+
+  return {
+    provider: 'mercadopago',
+    checkoutMode: 'checkout_pro',
+    providerConfigured: isMercadoPagoConfigured(),
+    amount: invoice.amount,
+    currency: invoice.currency,
+    publicKey: getMercadoPagoPublicKey(),
+    invoiceId: invoice._id,
+    preferenceId: checkout.preferenceId || invoice.mercadoPagoPreferenceId || '',
+    checkoutUrl: checkout.checkoutUrl || invoice.checkoutUrl || invoice.checkoutSandboxUrl || '',
     description: buildInvoiceDescription(owner),
     payer: {
       email: payer.email,
@@ -223,6 +277,16 @@ function applySnapshotToInvoice(invoice, snapshot) {
   invoice.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
 }
 
+function applyPaymentSnapshotToInvoice(invoice, snapshot) {
+  invoice.mercadoPagoPreferenceId = snapshot.preferenceId || invoice.mercadoPagoPreferenceId || '';
+  invoice.mercadoPagoOrderId = snapshot.paymentOrderId || invoice.mercadoPagoOrderId || '';
+  invoice.mercadoPagoPaymentId = snapshot.paymentId;
+  invoice.mercadoPagoStatus = snapshot.paymentStatus;
+  invoice.mercadoPagoStatusDetail = snapshot.paymentStatusDetail;
+  invoice.mercadoPagoPaymentMethodId = snapshot.paymentMethodId;
+  invoice.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
+}
+
 async function markInvoiceAsPaid(invoice, approvedAt) {
   const lastPaidInvoice = await OwnerBilling.findOne({
     ownerId: invoice.ownerId,
@@ -239,6 +303,49 @@ async function markInvoiceAsPaid(invoice, approvedAt) {
   invoice.paidAt = approvedAt;
   invoice.accessStartsAt = accessStart;
   invoice.accessEndsAt = addMonths(accessStart, getBillingMonths());
+}
+
+async function createOwnerBillingCheckout(invoice, owner) {
+  const payer = resolveOwnerBillingPayer(owner);
+  const preference = await createCheckoutPreference({
+    externalReference: invoice.externalReference,
+    payer: {
+      email: payer.email,
+    },
+    items: [
+      {
+        id: String(invoice._id),
+        title: 'Mensualidad del complejo',
+        description: buildInvoiceDescription(owner),
+        quantity: 1,
+        currency_id: invoice.currency || 'ARS',
+        unit_price: Number(invoice.amount || 0),
+      },
+    ],
+    backUrls: {
+      success: buildOwnerBillingReturnUrl(invoice, 'success'),
+      pending: buildOwnerBillingReturnUrl(invoice, 'pending'),
+      failure: buildOwnerBillingReturnUrl(invoice, 'failure'),
+    },
+    notificationUrl: buildOwnerBillingNotificationUrl(invoice),
+    metadata: {
+      entity: 'owner_billing',
+      invoice_id: String(invoice._id),
+    },
+  });
+
+  invoice.mercadoPagoPreferenceId = String(preference?.id || '');
+  invoice.checkoutUrl = String(preference?.init_point || '');
+  invoice.checkoutSandboxUrl = String(preference?.sandbox_init_point || '');
+  await invoice.save();
+
+  return {
+    invoice,
+    paymentSession: getOwnerCheckoutPaymentSession(invoice, owner, payer.email, {
+      preferenceId: invoice.mercadoPagoPreferenceId,
+      checkoutUrl: resolveOwnerBillingCheckoutUrl(preference),
+    }),
+  };
 }
 
 export async function maybeSendOwnerBillingPaidNotifications(invoice, ownerOverride = null) {
@@ -301,6 +408,30 @@ async function syncInvoiceFromMercadoPagoOrder(invoice, order) {
   return invoice;
 }
 
+async function syncInvoiceFromMercadoPagoPayment(invoice, payment) {
+  const snapshot = getMercadoPagoPaymentSnapshot(payment);
+  applyPaymentSnapshotToInvoice(invoice, snapshot);
+
+  if (isApprovedMercadoPagoPayment(payment)) {
+    const approvedAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
+    await markInvoiceAsPaid(invoice, approvedAt);
+  } else if (isPendingMercadoPagoPayment(payment)) {
+    if (invoice.status !== 'PAID') {
+      invoice.status = 'PENDING';
+    }
+  } else if (isCancelledMercadoPagoPayment(payment)) {
+    if (invoice.status !== 'PAID') {
+      invoice.status = 'CANCELLED';
+    }
+  } else if (isFailedMercadoPagoPayment(payment) && invoice.status !== 'PAID') {
+    invoice.status = 'FAILED';
+  }
+
+  await invoice.save();
+  await maybeSendOwnerBillingPaidNotifications(invoice);
+  return invoice;
+}
+
 export async function getOwnerBillingState(owner, options = {}) {
   const { createIfMissing = true } = options;
 
@@ -308,7 +439,7 @@ export async function getOwnerBillingState(owner, options = {}) {
     return {
       required: false,
       provider: 'mercadopago',
-      checkoutMode: 'orders',
+      checkoutMode: 'checkout_pro',
       providerConfigured: isMercadoPagoConfigured(),
       hasAccess: true,
       status: 'NOT_REQUIRED',
@@ -338,7 +469,7 @@ export async function getOwnerBillingState(owner, options = {}) {
     return {
       required: true,
       provider: 'mercadopago',
-      checkoutMode: 'orders',
+      checkoutMode: 'checkout_pro',
       providerConfigured: isMercadoPagoConfigured(),
       hasAccess: true,
       status: 'ACTIVE',
@@ -359,7 +490,7 @@ export async function getOwnerBillingState(owner, options = {}) {
   return {
     required: true,
     provider: 'mercadopago',
-    checkoutMode: 'orders',
+    checkoutMode: 'checkout_pro',
     providerConfigured: isMercadoPagoConfigured(),
     hasAccess: hasGraceAccess,
     status: hasGraceAccess ? 'GRACE' : 'BLOCKED',
@@ -390,10 +521,7 @@ export async function createOrReuseOwnerCheckout(owner) {
     pendingInvoice = await createPendingInvoice(owner, dueDate);
   }
 
-  return {
-    invoice: pendingInvoice,
-    paymentSession: getOwnerPaymentSession(pendingInvoice, owner),
-  };
+  return createOwnerBillingCheckout(pendingInvoice, owner);
 }
 
 export async function processOwnerBillingOrder(owner, invoiceId, formData, additionalData = {}) {
@@ -412,7 +540,7 @@ export async function processOwnerBillingOrder(owner, invoiceId, formData, addit
     return {
       invoice: serializeInvoice(invoice),
       ownerBilling: await getOwnerBillingState(owner),
-      paymentSession: getOwnerPaymentSession(invoice, owner, formData?.payer?.email),
+      paymentSession: getOwnerCardPaymentSession(invoice, owner, formData?.payer?.email),
     };
   }
 
@@ -437,11 +565,11 @@ export async function processOwnerBillingOrder(owner, invoiceId, formData, addit
   return {
     invoice: serializeInvoice(syncedInvoice),
     ownerBilling: await getOwnerBillingState(owner),
-    paymentSession: getOwnerPaymentSession(syncedInvoice, owner, payer.email),
+    paymentSession: getOwnerCardPaymentSession(syncedInvoice, owner, payer.email),
   };
 }
 
-export async function syncOwnerBillingPayment(orderId) {
+export async function syncOwnerBillingOrder(orderId) {
   const order = await getMercadoPagoOrder(orderId);
 
   let invoice = null;
@@ -464,6 +592,93 @@ export async function syncOwnerBillingPayment(orderId) {
     ok: true,
     invoice: serializeInvoice(syncedInvoice),
     paymentStatus: syncedInvoice.mercadoPagoStatus,
+  };
+}
+
+export async function syncOwnerBillingPayment(paymentId) {
+  const payment = await getMercadoPagoPayment(paymentId);
+  const snapshot = getMercadoPagoPaymentSnapshot(payment);
+
+  let invoice = null;
+
+  if (payment.external_reference) {
+    invoice = await OwnerBilling.findOne({ externalReference: payment.external_reference });
+  }
+
+  if (!invoice && snapshot.preferenceId) {
+    invoice = await OwnerBilling.findOne({ mercadoPagoPreferenceId: snapshot.preferenceId });
+  }
+
+  if (!invoice && snapshot.paymentId) {
+    invoice = await OwnerBilling.findOne({ mercadoPagoPaymentId: snapshot.paymentId });
+  }
+
+  if (!invoice) {
+    return { ok: false, reason: 'invoice_not_found' };
+  }
+
+  const syncedInvoice = await syncInvoiceFromMercadoPagoPayment(invoice, payment);
+
+  return {
+    ok: true,
+    invoice: serializeInvoice(syncedInvoice),
+    paymentStatus: syncedInvoice.mercadoPagoStatus,
+  };
+}
+
+export async function syncOwnerBillingInvoicePayment(owner, invoiceId, options = {}) {
+  const { paymentId = '', result = '' } = options;
+  const invoice = await OwnerBilling.findOne({
+    _id: invoiceId,
+    ownerId: owner._id,
+  });
+
+  if (!invoice) {
+    const error = new Error('Factura de mensualidad no encontrada.');
+    error.status = 404;
+    throw error;
+  }
+
+  let syncedInvoice = invoice;
+  const normalizedPaymentId = String(paymentId || '').trim();
+  const normalizedResult = String(result || '').trim().toLowerCase();
+
+  if (normalizedPaymentId) {
+    const payment = await getMercadoPagoPayment(normalizedPaymentId);
+    const snapshot = getMercadoPagoPaymentSnapshot(payment);
+    const matchesExternalReference =
+      String(payment.external_reference || '').trim() === String(invoice.externalReference || '').trim();
+    const matchesPreferenceId =
+      snapshot.preferenceId &&
+      String(snapshot.preferenceId).trim() === String(invoice.mercadoPagoPreferenceId || '').trim();
+    const matchesExistingPaymentId =
+      String(invoice.mercadoPagoPaymentId || '').trim() === normalizedPaymentId;
+
+    if (
+      (String(payment.external_reference || '').trim() || String(snapshot.preferenceId || '').trim()) &&
+      !matchesExternalReference &&
+      !matchesPreferenceId &&
+      !matchesExistingPaymentId
+    ) {
+      const error = new Error('El pago no corresponde a esta factura.');
+      error.status = 409;
+      throw error;
+    }
+
+    syncedInvoice = await syncInvoiceFromMercadoPagoPayment(invoice, payment);
+  } else if (invoice.mercadoPagoPaymentId) {
+    const payment = await getMercadoPagoPayment(invoice.mercadoPagoPaymentId);
+    syncedInvoice = await syncInvoiceFromMercadoPagoPayment(invoice, payment);
+  } else if (invoice.mercadoPagoOrderId) {
+    const order = await getMercadoPagoOrder(invoice.mercadoPagoOrderId);
+    syncedInvoice = await syncInvoiceFromMercadoPagoOrder(invoice, order);
+  } else if (normalizedResult === 'failure' && invoice.status !== 'PAID') {
+    syncedInvoice = invoice;
+  }
+
+  return {
+    invoice: serializeInvoice(syncedInvoice),
+    ownerBilling: await getOwnerBillingState(owner),
   };
 }
 
@@ -558,5 +773,5 @@ export async function filterClientVisibleComplexes(complexes, options = {}) {
 }
 
 export function extractMercadoPagoPaymentId(payload = {}) {
-  return extractMercadoPagoOrderId(payload);
+  return extractMercadoPagoWebhookPaymentId(payload);
 }

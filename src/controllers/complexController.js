@@ -6,6 +6,16 @@ import {
 } from '../utils/ownerBilling.js';
 import { destroyCloudinaryAsset } from '../utils/cloudinary.js';
 
+function buildOwnerContact(owner, complex = null) {
+  const phone = String(owner?.phone || owner?.ownerApplication?.contactPhone || complex?.phone || '').trim();
+  const email = String(owner?.email || '').trim();
+
+  return {
+    phone,
+    email,
+  };
+}
+
 async function withCourtsCount(complexes) {
   return Promise.all(
     complexes.map(async (complex) => {
@@ -58,10 +68,12 @@ export const getComplexes = async (req, res) => {
 export const getComplexById = async (req, res) => {
   try {
     let complex;
+    let ownerContact = null;
 
     if (req.query.clientVisible === 'true') {
       const state = await assertComplexClientAccess(req.params.id, { createBillingIfMissing: true });
       complex = state.complex;
+      ownerContact = buildOwnerContact(state.owner, state.complex);
     } else {
       complex = await Complex.findById(req.params.id).populate('ownerId', 'displayName email role ownerStatus');
     }
@@ -71,7 +83,20 @@ export const getComplexById = async (req, res) => {
     }
 
     const courtsCount = await Court.countDocuments({ complexId: complex._id });
-    res.json({ ...complex.toObject(), courtsCount });
+    const response = { ...complex.toObject(), courtsCount };
+
+    if (req.query.clientVisible === 'true') {
+      response.ownerContact = ownerContact;
+
+      if (response.ownerId && typeof response.ownerId === 'object') {
+        response.ownerId = {
+          _id: response.ownerId._id,
+          displayName: response.ownerId.displayName || '',
+        };
+      }
+    }
+
+    res.json(response);
   } catch (error) {
     res.status(error.status || 500).json({
       error: error.message || 'Error al obtener el complejo',

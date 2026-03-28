@@ -5,11 +5,13 @@ import {
   getOwnerBillingState,
   maybeSendOwnerBillingPaidNotifications,
   processOwnerBillingOrder,
+  syncOwnerBillingInvoicePayment,
+  syncOwnerBillingOrder,
   syncOwnerBillingPayment,
 } from '../utils/ownerBilling.js';
 import Complex from '../models/Complex.js';
 import OwnerBilling from '../models/OwnerBilling.js';
-import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
+import { extractMercadoPagoOrderId, validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 
 function serializeAdminInvoice(invoice, complexes = []) {
   return {
@@ -88,6 +90,35 @@ export const processOwnerBillingCheckout = async (req, res) => {
     });
   } catch (error) {
     res.status(error.status || 500).json({ message: error.message || 'Error procesando el pago', error: error.message });
+  }
+};
+
+export const syncOwnerBillingInvoice = async (req, res) => {
+  try {
+    const result = await syncOwnerBillingInvoicePayment(req.dbUser, req.params.id, {
+      paymentId:
+        req.body?.paymentId ||
+        req.body?.collectionId ||
+        req.query?.payment_id ||
+        req.query?.collection_id ||
+        '',
+      result: req.body?.result || req.query?.result || '',
+    });
+
+    res.json({
+      message:
+        result.invoice?.status === 'PAID'
+          ? 'Pago acreditado correctamente.'
+          : ['FAILED', 'CANCELLED'].includes(String(result.invoice?.status || ''))
+            ? 'El pago no pudo acreditarse.'
+            : 'El pago sigue pendiente de confirmacion.',
+      ...result,
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      message: error.message || 'No se pudo validar el pago.',
+      error: error.message,
+    });
   }
 };
 
@@ -259,7 +290,17 @@ export const handleMercadoPagoWebhook = async (req, res) => {
     });
 
     if (!paymentId) {
-      return res.status(200).json({ received: true, ignored: true });
+      const orderId = extractMercadoPagoOrderId({
+        ...req.body,
+        query: req.query,
+      });
+
+      if (!orderId) {
+        return res.status(200).json({ received: true, ignored: true });
+      }
+
+      const result = await syncOwnerBillingOrder(orderId);
+      return res.status(200).json({ received: true, result });
     }
 
     const result = await syncOwnerBillingPayment(paymentId);
