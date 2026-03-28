@@ -32,6 +32,11 @@ const DEFAULT_CURRENCY = 'ARS';
 const DEFAULT_GRACE_DAYS = 3;
 const DEFAULT_BILLING_MONTHS = 1;
 
+function getMercadoPagoMode() {
+  const sample = `${String(process.env.MERCADOPAGO_ACCESS_TOKEN || '')} ${String(process.env.MERCADOPAGO_PUBLIC_KEY || '')}`.toUpperCase();
+  return sample.includes('TEST') ? 'sandbox' : 'production';
+}
+
 function addMonths(date, months) {
   const nextDate = new Date(date);
   nextDate.setMonth(nextDate.getMonth() + months);
@@ -64,7 +69,7 @@ function getBillingMonths() {
 }
 
 function getConfiguredTestPayerEmail() {
-  if (String(process.env.NODE_ENV || '').toLowerCase() === 'production') {
+  if (getMercadoPagoMode() === 'production') {
     return '';
   }
 
@@ -121,7 +126,11 @@ function buildOwnerBillingNotificationUrl(invoice) {
 }
 
 function resolveOwnerBillingCheckoutUrl(preference) {
-  return String(preference?.sandbox_init_point || preference?.init_point || '').trim();
+  if (getMercadoPagoMode() === 'sandbox') {
+    return String(preference?.sandbox_init_point || preference?.init_point || '').trim();
+  }
+
+  return String(preference?.init_point || preference?.sandbox_init_point || '').trim();
 }
 
 function getInvoiceBlockAt(invoice) {
