@@ -6,11 +6,41 @@ const ENTITY_FOLDERS = {
   complex: 'gestion-canchas/complexes',
 };
 
+function readEnv(name) {
+  return String(process.env[name] || '').trim();
+}
+
+function parseCloudinaryUrl(value) {
+  const rawValue = String(value || '').trim();
+
+  if (!rawValue) {
+    return null;
+  }
+
+  try {
+    const parsed = new URL(rawValue);
+
+    if (parsed.protocol !== 'cloudinary:') {
+      return null;
+    }
+
+    return {
+      cloudName: decodeURIComponent(parsed.hostname || '').trim(),
+      apiKey: decodeURIComponent(parsed.username || '').trim(),
+      apiSecret: decodeURIComponent(parsed.password || '').trim(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 function getConfig() {
+  const cloudinaryUrlConfig = parseCloudinaryUrl(readEnv('CLOUDINARY_URL')) || {};
+
   return {
-    cloudName: String(process.env.CLOUDINARY_CLOUD_NAME || '').trim(),
-    apiKey: String(process.env.CLOUDINARY_API_KEY || '').trim(),
-    apiSecret: String(process.env.CLOUDINARY_API_SECRET || '').trim(),
+    cloudName: readEnv('CLOUDINARY_CLOUD_NAME') || cloudinaryUrlConfig.cloudName || '',
+    apiKey: readEnv('CLOUDINARY_API_KEY') || cloudinaryUrlConfig.apiKey || '',
+    apiSecret: readEnv('CLOUDINARY_API_SECRET') || cloudinaryUrlConfig.apiSecret || '',
   };
 }
 
@@ -42,7 +72,9 @@ export function resolveCloudinaryFolder(entityType) {
 
 export function createSignedUploadParams(entityType) {
   if (!isCloudinaryConfigured()) {
-    const error = new Error('Cloudinary no esta configurado en el backend.');
+    const error = new Error(
+      'Cloudinary no esta configurado en el backend. Revisa CLOUDINARY_URL o CLOUDINARY_CLOUD_NAME, CLOUDINARY_API_KEY y CLOUDINARY_API_SECRET.',
+    );
     error.status = 503;
     throw error;
   }
