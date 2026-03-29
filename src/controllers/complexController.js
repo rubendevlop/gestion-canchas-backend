@@ -31,6 +31,20 @@ function buildReservationPaymentOptions(paymentProvider = {}) {
   };
 }
 
+function buildStorePaymentOptions(paymentProvider = {}) {
+  const onlineEnabled =
+    paymentProvider.configured === true &&
+    paymentProvider.accountSummary?.ordersEnabled !== false;
+
+  return {
+    defaultMethod: onlineEnabled ? 'ONLINE' : 'ON_SITE',
+    onSiteEnabled: true,
+    onlineEnabled,
+    provider: onlineEnabled ? 'mercadopago' : '',
+    providerMode: onlineEnabled ? paymentProvider.accountSummary?.mode || '' : '',
+  };
+}
+
 async function withCourtsCount(complexes) {
   return Promise.all(
     complexes.map(async (complex) => {
@@ -85,6 +99,7 @@ export const getComplexById = async (req, res) => {
     let complex;
     let ownerContact = null;
     let reservationPaymentOptions = buildReservationPaymentOptions();
+    let storePaymentOptions = buildStorePaymentOptions();
 
     if (req.query.clientVisible === 'true') {
       const state = await assertComplexClientAccess(req.params.id, { createBillingIfMissing: true });
@@ -95,6 +110,7 @@ export const getComplexById = async (req, res) => {
           ? await getOwnerPaymentProvider(state.owner._id)
           : { configured: false, accountSummary: null };
         reservationPaymentOptions = buildReservationPaymentOptions(paymentProvider);
+        storePaymentOptions = buildStorePaymentOptions(paymentProvider);
       } catch (paymentProviderError) {
         console.error(
           'No se pudo resolver la configuracion de cobro del complejo:',
@@ -115,6 +131,7 @@ export const getComplexById = async (req, res) => {
     if (req.query.clientVisible === 'true') {
       response.ownerContact = ownerContact;
       response.reservationPaymentOptions = reservationPaymentOptions;
+      response.storePaymentOptions = storePaymentOptions;
 
       if (response.ownerId && typeof response.ownerId === 'object') {
         response.ownerId = {

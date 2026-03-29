@@ -61,6 +61,65 @@ function buildOrderDescription(order, complex) {
   return `Pedido tienda ${complex?.name || 'Clubes Tucumán'} #${String(order._id).slice(-6).toUpperCase()}`;
 }
 
+function normalizeOrderPaymentMethod(value, fallback = '') {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'ONLINE' || normalized === 'ON_SITE') {
+    return normalized;
+  }
+
+  return fallback;
+}
+
+function resolveOrderPaymentMethod(order = {}) {
+  const explicitMethod = normalizeOrderPaymentMethod(order?.paymentMethod);
+  if (explicitMethod) {
+    return explicitMethod;
+  }
+
+  if (
+    order?.mercadoPagoPreferenceId ||
+    order?.mercadoPagoOrderId ||
+    order?.mercadoPagoPaymentId ||
+    order?.mercadoPagoStatus ||
+    order?.mercadoPagoPaymentMethodId
+  ) {
+    return 'ONLINE';
+  }
+
+  return 'ON_SITE';
+}
+
+function buildOrderPaymentOptions(paymentProvider = {}) {
+  const onlineEnabled =
+    paymentProvider.configured === true &&
+    paymentProvider.accountSummary?.ordersEnabled !== false;
+
+  return {
+    defaultMethod: onlineEnabled ? 'ONLINE' : 'ON_SITE',
+    onSiteEnabled: true,
+    onlineEnabled,
+    provider: onlineEnabled ? 'mercadopago' : '',
+    providerMode: onlineEnabled ? paymentProvider.accountSummary?.mode || '' : '',
+  };
+}
+
+function resolveRequestedOrderPaymentMethod(value, { onlineEnabled = false } = {}) {
+  const explicitMethod = normalizeOrderPaymentMethod(value);
+  if (explicitMethod) {
+    return explicitMethod;
+  }
+
+  return onlineEnabled ? 'ONLINE' : 'ON_SITE';
+}
+
+function serializeOrderRecord(order) {
+  const raw = typeof order?.toObject === 'function' ? order.toObject() : order;
+  return {
+    ...raw,
+    paymentMethod: resolveOrderPaymentMethod(raw),
+  };
+}
+
 function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}, checkout = {}) {
   const payer = resolveMercadoPagoPayerEmail({
     fallbackEmail: user.email,
@@ -73,11 +132,13 @@ function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}
     providerConfigured: paymentProvider.configured === true,
     publicKey: paymentProvider.publicKey || '',
     orderId: order._id,
+    paymentMethod: resolveOrderPaymentMethod(order),
     preferenceId: checkout.preferenceId || order.mercadoPagoPreferenceId || '',
     checkoutUrl: checkout.checkoutUrl || '',
     amount: order.totalAmount,
     currency: 'ARS',
     description: buildOrderDescription(order, complex),
+    availableMethods: buildOrderPaymentOptions(paymentProvider),
     payer: {
       email: payer.email,
       usesConfiguredTestEmail: payer.usesConfiguredTestEmail,
@@ -94,6 +155,7 @@ function serializeOrderPaymentSession(order, user, complex, paymentProvider = {}
 }
 
 function applySnapshotToOrder(order, snapshot) {
+  order.paymentMethod = 'ONLINE';
   order.mercadoPagoOrderId = snapshot.orderId;
   order.mercadoPagoOrderStatus = snapshot.orderStatus;
   order.mercadoPagoOrderStatusDetail = snapshot.orderStatusDetail;
@@ -105,6 +167,7 @@ function applySnapshotToOrder(order, snapshot) {
 }
 
 function applyPaymentSnapshotToOrder(order, snapshot) {
+  order.paymentMethod = 'ONLINE';
   order.mercadoPagoPreferenceId = snapshot.preferenceId || order.mercadoPagoPreferenceId || '';
   order.mercadoPagoOrderId = snapshot.paymentOrderId || order.mercadoPagoOrderId || '';
   order.mercadoPagoPaymentId = snapshot.paymentId;
@@ -243,6 +306,7 @@ async function createOrderCheckout(localOrder, user, complex, paymentProvider, p
     },
   });
 
+  localOrder.paymentMethod = 'ONLINE';
   localOrder.mercadoPagoPreferenceId = String(preference?.id || '');
   await localOrder.save();
 
@@ -292,7 +356,7 @@ async function loadOrderForUser(orderId, dbUser) {
 
 export const createOrder = async (req, res) => {
   try {
-    const { complexId, items = [] } = req.body;
+    const { complexId, items = [], paymentMethod: requestedPaymentMethod } = req.body;
 
     if (!complexId || !Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: 'complexId e items son requeridos.' });
@@ -303,10 +367,24 @@ export const createOrder = async (req, res) => {
     const paymentProvider = complex?.ownerId
       ? await getOwnerPaymentProvider(complex.ownerId)
       : { configured: false, publicKey: '', accountSummary: null };
+    const paymentOptions = buildOrderPaymentOptions(paymentProvider);
 
-    if (!paymentProvider.configured || paymentProvider.accountSummary?.ordersEnabled === false) {
+    if (
+      requestedPaymentMethod !== undefined &&
+      String(requestedPaymentMethod || '').trim() &&
+      !normalizeOrderPaymentMethod(requestedPaymentMethod)
+    ) {
+      return res.status(400).json({
+        error: 'paymentMethod debe ser ON_SITE u ONLINE.',
+      });
+    }
+
+    if (
+      normalizeOrderPaymentMethod(requestedPaymentMethod) === 'ONLINE' &&
+      paymentOptions.onlineEnabled !== true
+    ) {
       return res.status(409).json({
-        error: 'El complejo todavia no tiene cobros online configurados para la tienda.',
+        error: 'Este complejo no tiene cobros online habilitados para la tienda. Elige pagar al retirar.',
       });
     }
 
@@ -343,6 +421,9 @@ export const createOrder = async (req, res) => {
       (sum, item) => sum + item.price * item.quantity,
       0,
     );
+    const paymentMethod = resolveRequestedOrderPaymentMethod(requestedPaymentMethod, {
+      onlineEnabled: paymentOptions.onlineEnabled,
+    });
 
     const newOrder = new Order({
       userId: req.dbUser._id,
@@ -351,30 +432,41 @@ export const createOrder = async (req, res) => {
       items: normalizedItems,
       totalAmount,
       status: 'pending',
+      paymentMethod,
     });
 
     newOrder.externalReference = buildExternalReference(newOrder._id.toString());
     await newOrder.save();
-    let checkout;
-    try {
-      checkout = await createOrderCheckout(
-        newOrder,
-        req.dbUser,
-        complex,
-        paymentProvider,
-        productsById,
-      );
-    } catch (paymentError) {
-      newOrder.status = 'failed';
-      await newOrder.save();
-      throw paymentError;
+
+    if (newOrder.paymentMethod === 'ONLINE' && paymentOptions.onlineEnabled === true) {
+      let checkout;
+      try {
+        checkout = await createOrderCheckout(
+          newOrder,
+          req.dbUser,
+          complex,
+          paymentProvider,
+          productsById,
+        );
+      } catch (paymentError) {
+        newOrder.status = 'failed';
+        await newOrder.save();
+        throw paymentError;
+      }
+
+      return res.status(201).json({
+        order: serializeOrderRecord(checkout.order),
+        message: 'Pedido creado con exito. Falta completar el pago.',
+        paymentSession: checkout.paymentSession,
+        providerConfigured: true,
+      });
     }
 
     res.status(201).json({
-      order: checkout.order,
-      message: 'Pedido creado con exito. Falta completar el pago.',
-      paymentSession: checkout.paymentSession,
-      providerConfigured: paymentProvider.configured === true,
+      order: serializeOrderRecord(newOrder),
+      message: 'Pedido creado con exito. Podras pagarlo al retirar en el complejo.',
+      paymentSession: serializeOrderPaymentSession(newOrder, req.dbUser, complex, paymentProvider),
+      providerConfigured: paymentOptions.onlineEnabled === true,
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -403,7 +495,7 @@ export const processOrderPayment = async (req, res) => {
 
     res.json({
       message: 'Checkout generado correctamente.',
-      order: checkout.order,
+      order: serializeOrderRecord(checkout.order),
       paymentSession: checkout.paymentSession,
     });
   } catch (error) {
@@ -454,7 +546,7 @@ export const syncOrderPayment = async (req, res) => {
           : syncedOrder.status === 'cancelled'
             ? 'El pedido fue cancelado.'
             : 'El pago sigue pendiente de confirmacion.',
-      order: syncedOrder,
+      order: serializeOrderRecord(syncedOrder),
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -495,7 +587,10 @@ export const handleMercadoPagoOrderWebhook = async (req, res) => {
       const mercadoPagoPayment = await getMercadoPagoPayment(paymentId, paymentProvider.accessToken);
       const syncedOrder = await syncLocalOrderFromMercadoPagoPayment(localOrder, mercadoPagoPayment);
 
-      return res.status(200).json({ received: true, order: syncedOrder });
+      return res.status(200).json({
+        received: true,
+        order: serializeOrderRecord(syncedOrder),
+      });
     }
 
     const orderId = extractMercadoPagoOrderId({
@@ -523,7 +618,10 @@ export const handleMercadoPagoOrderWebhook = async (req, res) => {
 
     const syncedOrder = await syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder);
 
-    res.status(200).json({ received: true, order: syncedOrder });
+    res.status(200).json({
+      received: true,
+      order: serializeOrderRecord(syncedOrder),
+    });
   } catch (error) {
     res.status(200).json({
       received: true,
@@ -568,7 +666,7 @@ export const getOrders = async (req, res) => {
       .populate('items.productId', 'name')
       .sort({ createdAt: -1 });
 
-    res.json(orders);
+    res.json(orders.map((order) => serializeOrderRecord(order)));
   } catch (error) {
     res.status(500).json({ error: 'Error al obtener historial de ordenes', detail: error.message });
   }

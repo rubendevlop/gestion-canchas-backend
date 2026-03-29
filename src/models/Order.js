@@ -12,6 +12,7 @@ const orderSchema = new mongoose.Schema({
   }],
   totalAmount: { type: Number, required: true },
   status: { type: String, enum: ['pending', 'completed', 'failed', 'cancelled'], default: 'pending' },
+  paymentMethod: { type: String, enum: ['ON_SITE', 'ONLINE'], default: 'ON_SITE' },
   mercadoPagoPaymentId: { type: String },
   mercadoPagoPreferenceId: { type: String },
   mercadoPagoOrderId: { type: String, index: true },
