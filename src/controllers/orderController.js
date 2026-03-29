@@ -112,6 +112,15 @@ function resolveRequestedOrderPaymentMethod(value, { onlineEnabled = false } = {
   return onlineEnabled ? 'ONLINE' : 'ON_SITE';
 }
 
+function normalizeOrderStatus(value, fallback = '') {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['pending', 'completed', 'cancelled', 'failed'].includes(normalized)) {
+    return normalized;
+  }
+
+  return fallback;
+}
+
 function serializeOrderRecord(order) {
   const raw = typeof order?.toObject === 'function' ? order.toObject() : order;
   return {
@@ -324,6 +333,13 @@ async function createOrderCheckout(localOrder, user, complex, paymentProvider, p
   };
 }
 
+async function hydrateOrderRecord(orderId) {
+  return Order.findById(orderId)
+    .populate('complexId', 'name')
+    .populate('userId', 'displayName email')
+    .populate('items.productId', 'name');
+}
+
 async function loadOrderForUser(orderId, dbUser) {
   const order = await Order.findById(orderId).populate('complexId', 'name ownerId');
 
@@ -471,6 +487,50 @@ export const createOrder = async (req, res) => {
   } catch (error) {
     res.status(error.status || 500).json({
       error: error.message || 'Error al procesar la orden',
+      detail: error.message,
+    });
+  }
+};
+
+export const updateOrderOwnerStatus = async (req, res) => {
+  try {
+    const localOrder = await loadOrderForUser(req.params.id, req.dbUser);
+    const requestedStatus = normalizeOrderStatus(req.body?.status);
+
+    if (!['pending', 'completed', 'cancelled'].includes(requestedStatus)) {
+      return res.status(400).json({
+        error: 'status debe ser pending, completed o cancelled.',
+      });
+    }
+
+    if (resolveOrderPaymentMethod(localOrder) !== 'ON_SITE') {
+      return res.status(409).json({
+        error: 'Los pedidos online se actualizan automaticamente con Mercado Pago.',
+      });
+    }
+
+    localOrder.status = requestedStatus;
+    localOrder.paidAt = requestedStatus === 'completed' ? localOrder.paidAt || new Date() : null;
+    await localOrder.save();
+
+    if (requestedStatus === 'completed') {
+      await maybeSendOrderConfirmationEmail(localOrder);
+    }
+
+    const hydratedOrder = await hydrateOrderRecord(localOrder._id);
+
+    res.json({
+      message:
+        requestedStatus === 'completed'
+          ? 'Pedido marcado como cobrado.'
+          : requestedStatus === 'cancelled'
+            ? 'Pedido cancelado correctamente.'
+            : 'Pedido actualizado como pendiente.',
+      order: serializeOrderRecord(hydratedOrder || localOrder),
+    });
+  } catch (error) {
+    res.status(error.status || 500).json({
+      error: error.message || 'No se pudo actualizar el pedido.',
       detail: error.message,
     });
   }
