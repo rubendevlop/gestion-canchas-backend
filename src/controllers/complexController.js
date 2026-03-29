@@ -4,6 +4,7 @@ import {
   assertComplexClientAccess,
   filterClientVisibleComplexes,
 } from '../utils/ownerBilling.js';
+import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import { destroyCloudinaryAsset } from '../utils/cloudinary.js';
 
 function buildOwnerContact(owner, complex = null) {
@@ -13,6 +14,20 @@ function buildOwnerContact(owner, complex = null) {
   return {
     phone,
     email,
+  };
+}
+
+function buildReservationPaymentOptions(paymentProvider = {}) {
+  const onlineEnabled =
+    paymentProvider.configured === true &&
+    paymentProvider.accountSummary?.reservationsEnabled !== false;
+
+  return {
+    defaultMethod: onlineEnabled ? 'ONLINE' : 'ON_SITE',
+    onSiteEnabled: true,
+    onlineEnabled,
+    provider: onlineEnabled ? 'mercadopago' : '',
+    providerMode: onlineEnabled ? paymentProvider.accountSummary?.mode || '' : '',
   };
 }
 
@@ -69,11 +84,23 @@ export const getComplexById = async (req, res) => {
   try {
     let complex;
     let ownerContact = null;
+    let reservationPaymentOptions = buildReservationPaymentOptions();
 
     if (req.query.clientVisible === 'true') {
       const state = await assertComplexClientAccess(req.params.id, { createBillingIfMissing: true });
       complex = state.complex;
       ownerContact = buildOwnerContact(state.owner, state.complex);
+      try {
+        const paymentProvider = state.owner?._id
+          ? await getOwnerPaymentProvider(state.owner._id)
+          : { configured: false, accountSummary: null };
+        reservationPaymentOptions = buildReservationPaymentOptions(paymentProvider);
+      } catch (paymentProviderError) {
+        console.error(
+          'No se pudo resolver la configuracion de cobro del complejo:',
+          paymentProviderError.message,
+        );
+      }
     } else {
       complex = await Complex.findById(req.params.id).populate('ownerId', 'displayName email role ownerStatus');
     }
@@ -87,6 +114,7 @@ export const getComplexById = async (req, res) => {
 
     if (req.query.clientVisible === 'true') {
       response.ownerContact = ownerContact;
+      response.reservationPaymentOptions = reservationPaymentOptions;
 
       if (response.ownerId && typeof response.ownerId === 'object') {
         response.ownerId = {

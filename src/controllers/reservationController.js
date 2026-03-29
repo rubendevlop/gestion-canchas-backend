@@ -87,6 +87,69 @@ function buildReservationDescription(reservation, court, complex) {
   return `Reserva ${complex?.name || 'Clubes Tucumán'} - ${court?.name || 'Cancha'} - ${reservation.startTime}`;
 }
 
+function normalizeReservationPaymentMethod(value, fallback = '') {
+  const normalized = String(value || '').trim().toUpperCase();
+  if (normalized === 'ONLINE' || normalized === 'ON_SITE') {
+    return normalized;
+  }
+
+  return fallback;
+}
+
+function resolveReservationPaymentMethod(reservation = {}) {
+  const explicitMethod = normalizeReservationPaymentMethod(reservation?.paymentMethod);
+  if (explicitMethod) {
+    return explicitMethod;
+  }
+
+  if (
+    reservation?.mercadoPagoPreferenceId ||
+    reservation?.mercadoPagoOrderId ||
+    reservation?.mercadoPagoPaymentId ||
+    reservation?.mercadoPagoStatus ||
+    reservation?.mercadoPagoPaymentMethodId
+  ) {
+    return 'ONLINE';
+  }
+
+  return 'ON_SITE';
+}
+
+function buildReservationPaymentOptions(paymentProvider = {}) {
+  const onlineEnabled =
+    paymentProvider.configured === true &&
+    paymentProvider.accountSummary?.reservationsEnabled !== false;
+
+  return {
+    defaultMethod: onlineEnabled ? 'ONLINE' : 'ON_SITE',
+    onSiteEnabled: true,
+    onlineEnabled,
+    provider: onlineEnabled ? 'mercadopago' : '',
+    providerMode: onlineEnabled ? paymentProvider.accountSummary?.mode || '' : '',
+  };
+}
+
+function resolveRequestedReservationPaymentMethod(value, { onlineEnabled = false, role = '' } = {}) {
+  const explicitMethod = normalizeReservationPaymentMethod(value);
+  if (explicitMethod) {
+    return explicitMethod;
+  }
+
+  if (String(role || '').toLowerCase() === 'client' && onlineEnabled) {
+    return 'ONLINE';
+  }
+
+  return 'ON_SITE';
+}
+
+function serializeReservationRecord(reservation) {
+  const raw = typeof reservation?.toObject === 'function' ? reservation.toObject() : reservation;
+  return {
+    ...raw,
+    paymentMethod: resolveReservationPaymentMethod(raw),
+  };
+}
+
 function serializeReservationPaymentSession(
   reservation,
   user,
@@ -106,11 +169,13 @@ function serializeReservationPaymentSession(
     providerConfigured: paymentProvider.configured === true,
     publicKey: paymentProvider.publicKey || '',
     reservationId: reservation._id,
+    paymentMethod: resolveReservationPaymentMethod(reservation),
     preferenceId: checkout.preferenceId || reservation.mercadoPagoPreferenceId || '',
     checkoutUrl: checkout.checkoutUrl || '',
     amount: reservation.totalPrice,
     currency: 'ARS',
     description: buildReservationDescription(reservation, court, complex),
+    availableMethods: buildReservationPaymentOptions(paymentProvider),
     payer: {
       email: payer.email,
       usesConfiguredTestEmail: payer.usesConfiguredTestEmail,
@@ -127,6 +192,7 @@ function serializeReservationPaymentSession(
 }
 
 function applySnapshotToReservation(reservation, snapshot) {
+  reservation.paymentMethod = 'ONLINE';
   reservation.mercadoPagoOrderId = snapshot.orderId;
   reservation.mercadoPagoOrderStatus = snapshot.orderStatus;
   reservation.mercadoPagoOrderStatusDetail = snapshot.orderStatusDetail;
@@ -138,6 +204,7 @@ function applySnapshotToReservation(reservation, snapshot) {
 }
 
 function applyPaymentSnapshotToReservation(reservation, snapshot) {
+  reservation.paymentMethod = 'ONLINE';
   reservation.mercadoPagoPreferenceId = snapshot.preferenceId || reservation.mercadoPagoPreferenceId || '';
   reservation.mercadoPagoOrderId = snapshot.paymentOrderId || reservation.mercadoPagoOrderId || '';
   reservation.mercadoPagoPaymentId = snapshot.paymentId;
@@ -323,6 +390,7 @@ async function createReservationCheckout(reservation, user, paymentProvider) {
     },
   });
 
+  reservation.paymentMethod = 'ONLINE';
   reservation.mercadoPagoPreferenceId = String(preference?.id || '');
   await reservation.save();
 
@@ -387,7 +455,7 @@ async function loadReservationForPayment(reservationId, dbUser) {
 
 export const createReservation = async (req, res) => {
   try {
-    const { courtId, date, startTime } = req.body;
+    const { courtId, date, startTime, paymentMethod: requestedPaymentMethod } = req.body;
     const user = req.dbUser;
 
     if (!courtId || !date || !startTime) {
@@ -425,21 +493,6 @@ export const createReservation = async (req, res) => {
     const [hour, minute] = startTime.split(':').map(Number);
     const endTime = `${String(hour + 1).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
 
-    const reservation = new Reservation({
-      user: user._id,
-      court: court._id,
-      complexId: court.complexId,
-      date: dateObj,
-      startTime,
-      endTime,
-      totalPrice: court.pricePerHour,
-      status: 'PENDING',
-      externalReference: `reservation-draft-${user._id}-${Date.now()}`,
-    });
-
-    reservation.externalReference = buildReservationExternalReference(reservation._id.toString());
-
-    const saved = await reservation.save();
     let complex = null;
     let paymentProvider = { configured: false, publicKey: '', accountSummary: null };
 
@@ -452,12 +505,54 @@ export const createReservation = async (req, res) => {
       console.error('No se pudo resolver la cuenta de cobro al crear la reserva:', paymentSetupError.message);
     }
 
-    if (paymentProvider.configured === true) {
+    const paymentOptions = buildReservationPaymentOptions(paymentProvider);
+    if (
+      requestedPaymentMethod !== undefined &&
+      String(requestedPaymentMethod || '').trim() &&
+      !normalizeReservationPaymentMethod(requestedPaymentMethod)
+    ) {
+      return res.status(400).json({
+        message: 'paymentMethod debe ser ON_SITE u ONLINE.',
+      });
+    }
+
+    const paymentMethod = resolveRequestedReservationPaymentMethod(requestedPaymentMethod, {
+      onlineEnabled: paymentOptions.onlineEnabled,
+      role: user.role,
+    });
+
+    if (
+      normalizeReservationPaymentMethod(requestedPaymentMethod) === 'ONLINE' &&
+      paymentOptions.onlineEnabled !== true
+    ) {
+      return res.status(409).json({
+        message: 'Este complejo no tiene cobros online habilitados para reservas. Elige pagar en cancha.',
+      });
+    }
+
+    const reservation = new Reservation({
+      user: user._id,
+      court: court._id,
+      complexId: court.complexId,
+      date: dateObj,
+      startTime,
+      endTime,
+      totalPrice: court.pricePerHour,
+      status: 'PENDING',
+      paymentMethod,
+      externalReference: `reservation-draft-${user._id}-${Date.now()}`,
+    });
+
+    reservation.externalReference = buildReservationExternalReference(reservation._id.toString());
+
+    const saved = await reservation.save();
+
+    if (saved.paymentMethod === 'ONLINE' && paymentOptions.onlineEnabled === true) {
       try {
         const checkout = await createReservationCheckout(saved, user, paymentProvider);
 
         return res.status(201).json({
-          reservation: checkout.reservation,
+          reservation: serializeReservationRecord(checkout.reservation),
           providerConfigured: true,
           paymentSession: checkout.paymentSession,
         });
@@ -473,8 +568,8 @@ export const createReservation = async (req, res) => {
     }
 
     res.status(201).json({
-      reservation: saved,
-      providerConfigured: false,
+      reservation: serializeReservationRecord(saved),
+      providerConfigured: paymentOptions.onlineEnabled === true,
       paymentSession: serializeReservationPaymentSession(saved, user, court, complex, paymentProvider),
     });
   } catch (error) {
@@ -493,7 +588,7 @@ export const getMyReservations = async (req, res) => {
       .sort({ date: -1 });
 
     const normalized = reservations.map((reservation) => ({
-      ...reservation.toObject(),
+      ...serializeReservationRecord(reservation),
       date: reservation.date ? reservation.date.toISOString().slice(0, 10) : '',
       status: reservation.status.toLowerCase(),
       complex: reservation.complexId
@@ -560,7 +655,7 @@ export const cancelReservation = async (req, res) => {
 
     reservation.status = 'CANCELLED';
     await reservation.save();
-    res.json({ message: 'Reserva cancelada', reservation });
+    res.json({ message: 'Reserva cancelada', reservation: serializeReservationRecord(reservation) });
   } catch (error) {
     res.status(500).json({ message: 'Error cancelando la reserva', error: error.message });
   }
@@ -633,13 +728,13 @@ export const refundReservation = async (req, res) => {
     if (syncedReservation.paymentStatus !== 'REFUNDED') {
       return res.status(409).json({
         message: 'Mercado Pago no confirmo el reembolso completo de la reserva.',
-        reservation: syncedReservation,
+        reservation: serializeReservationRecord(syncedReservation),
       });
     }
 
     res.json({
       message: 'Reserva reembolsada correctamente.',
-      reservation: syncedReservation,
+      reservation: serializeReservationRecord(syncedReservation),
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -664,7 +759,7 @@ export const confirmReservation = async (req, res) => {
 
     reservation.status = 'CONFIRMED';
     await reservation.save();
-    res.json({ message: 'Reserva confirmada', reservation });
+    res.json({ message: 'Reserva confirmada', reservation: serializeReservationRecord(reservation) });
   } catch (error) {
     res.status(error.status || 500).json({ message: error.message || 'Error confirmando la reserva' });
   }
@@ -685,14 +780,14 @@ export const processReservationPayment = async (req, res) => {
       });
     }
 
-    try {
-      const checkout = await createReservationCheckout(reservation, req.dbUser, paymentProvider);
+      try {
+        const checkout = await createReservationCheckout(reservation, req.dbUser, paymentProvider);
 
-      return res.json({
-        message: 'Checkout generado correctamente.',
-        reservation: checkout.reservation,
-        paymentSession: checkout.paymentSession,
-      });
+        return res.json({
+          message: 'Checkout generado correctamente.',
+          reservation: serializeReservationRecord(checkout.reservation),
+          paymentSession: checkout.paymentSession,
+        });
     } catch (paymentError) {
       await cancelUnpaidReservation(reservation);
 
@@ -759,7 +854,7 @@ export const syncReservationPayment = async (req, res) => {
           : syncedReservation.status === 'CANCELLED'
             ? 'La reserva fue cancelada y el horario se libero.'
             : 'El pago sigue pendiente de confirmacion.',
-      reservation: syncedReservation,
+      reservation: serializeReservationRecord(syncedReservation),
     });
   } catch (error) {
     res.status(error.status || 500).json({
@@ -802,7 +897,10 @@ export const handleMercadoPagoReservationWebhook = async (req, res) => {
       const mercadoPagoPayment = await getMercadoPagoPayment(paymentId, paymentProvider.accessToken);
       const syncedReservation = await syncReservationFromMercadoPagoPayment(reservation, mercadoPagoPayment);
 
-      return res.status(200).json({ received: true, reservation: syncedReservation });
+      return res.status(200).json({
+        received: true,
+        reservation: serializeReservationRecord(syncedReservation),
+      });
     }
 
     const orderId = extractMercadoPagoOrderId({
@@ -830,7 +928,10 @@ export const handleMercadoPagoReservationWebhook = async (req, res) => {
     const mercadoPagoOrder = await getMercadoPagoOrder(orderId, paymentProvider.accessToken);
     const syncedReservation = await syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder);
 
-    res.status(200).json({ received: true, reservation: syncedReservation });
+    res.status(200).json({
+      received: true,
+      reservation: serializeReservationRecord(syncedReservation),
+    });
   } catch (error) {
     res.status(200).json({
       received: true,
@@ -877,7 +978,7 @@ export const getComplexReservations = async (req, res) => {
       .populate('user', 'displayName email photoURL createdAt')
       .sort({ date: 1, startTime: 1 });
 
-    res.json(reservations);
+    res.json(reservations.map((reservation) => serializeReservationRecord(reservation)));
   } catch (error) {
     res.status(error.status || 500).json({
       message: error.message || 'Error obteniendo reservas del complejo',

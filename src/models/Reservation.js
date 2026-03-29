@@ -10,6 +10,7 @@ const reservationSchema = new mongoose.Schema({
   totalPrice: { type: Number, required: true },
   status: { type: String, enum: ['PENDING', 'CONFIRMED', 'CANCELLED'], default: 'PENDING' },
   paymentStatus: { type: String, enum: ['UNPAID', 'PARTIAL', 'PAID', 'REFUNDED'], default: 'UNPAID' },
+  paymentMethod: { type: String, enum: ['ON_SITE', 'ONLINE'], default: 'ON_SITE' },
   externalReference: { type: String, default: '', index: true },
   mercadoPagoPreferenceId: { type: String, default: '', index: true },
   mercadoPagoOrderId: { type: String, default: '', index: true },
