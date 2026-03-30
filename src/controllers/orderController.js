@@ -28,6 +28,12 @@ import {
   resolveMercadoPagoPayerEmail,
 } from '../utils/mercadoPago.js';
 
+const ACTIVE_CHECKOUT_STATE = 'ACTIVE';
+const CHECKOUT_PENDING_STATE = 'CHECKOUT_PENDING';
+const CHECKOUT_FAILED_STATE = 'CHECKOUT_FAILED';
+const CHECKOUT_EXPIRED_STATE = 'CHECKOUT_EXPIRED';
+const ORDER_CHECKOUT_WINDOW_MINUTES = 10;
+
 function buildExternalReference(orderId) {
   return `store-order-${orderId}`;
 }
@@ -59,6 +65,46 @@ function buildOrderNotificationUrl(order, complex) {
 
 function buildOrderDescription(order, complex) {
   return `Pedido tienda ${complex?.name || 'Clubes Tucumán'} #${String(order._id).slice(-6).toUpperCase()}`;
+}
+
+function getOrderCheckoutExpirationDate(baseDate = new Date()) {
+  return new Date(baseDate.getTime() + ORDER_CHECKOUT_WINDOW_MINUTES * 60 * 1000);
+}
+
+function buildActiveOrderStateFilter() {
+  return {
+    $or: [
+      { checkoutState: ACTIVE_CHECKOUT_STATE },
+      { checkoutState: { $exists: false } },
+    ],
+  };
+}
+
+async function expireStaleOrderCheckouts(filter = {}) {
+  const now = new Date();
+
+  await Order.updateMany(
+    {
+      checkoutState: CHECKOUT_PENDING_STATE,
+      checkoutExpiresAt: { $lte: now },
+      ...filter,
+    },
+    {
+      $set: {
+        checkoutState: CHECKOUT_EXPIRED_STATE,
+        checkoutExpiresAt: null,
+        status: 'cancelled',
+        paidAt: null,
+      },
+    },
+  );
+}
+
+function buildOrderItemsSignature(items = []) {
+  return [...items]
+    .map((item) => `${String(item.productId)}:${Number(item.quantity || 1)}`)
+    .sort()
+    .join('|');
 }
 
 function normalizeOrderPaymentMethod(value, fallback = '') {
@@ -237,6 +283,27 @@ async function maybeSendOrderConfirmationEmail(order) {
   }
 }
 
+function activateOrderAfterCheckout(order) {
+  order.checkoutState = ACTIVE_CHECKOUT_STATE;
+  order.checkoutExpiresAt = null;
+}
+
+async function cancelUnpaidOrder(
+  order,
+  checkoutState = CHECKOUT_FAILED_STATE,
+) {
+  order.status = 'cancelled';
+  order.paidAt = null;
+  order.checkoutExpiresAt = null;
+
+  if (order.checkoutState === CHECKOUT_PENDING_STATE) {
+    order.checkoutState = checkoutState;
+  }
+
+  await order.save();
+  return order;
+}
+
 async function syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder) {
   const snapshot = getMercadoPagoOrderSnapshot(mercadoPagoOrder);
   applySnapshotToOrder(localOrder, snapshot);
@@ -244,12 +311,14 @@ async function syncLocalOrderFromMercadoPagoOrder(localOrder, mercadoPagoOrder) 
   if (isApprovedMercadoPagoOrder(mercadoPagoOrder)) {
     localOrder.status = 'completed';
     localOrder.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
+    activateOrderAfterCheckout(localOrder);
   } else if (isCancelledMercadoPagoOrder(mercadoPagoOrder)) {
-    localOrder.status = 'cancelled';
+    return cancelUnpaidOrder(localOrder);
   } else if (isPendingMercadoPagoOrder(mercadoPagoOrder)) {
     localOrder.status = 'pending';
   } else if (isFailedMercadoPagoOrder(mercadoPagoOrder)) {
     localOrder.status = 'failed';
+    return cancelUnpaidOrder(localOrder);
   }
 
   await localOrder.save();
@@ -264,12 +333,14 @@ async function syncLocalOrderFromMercadoPagoPayment(localOrder, mercadoPagoPayme
   if (isApprovedMercadoPagoPayment(mercadoPagoPayment)) {
     localOrder.status = 'completed';
     localOrder.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
+    activateOrderAfterCheckout(localOrder);
   } else if (isPendingMercadoPagoPayment(mercadoPagoPayment)) {
     localOrder.status = 'pending';
   } else if (isCancelledMercadoPagoPayment(mercadoPagoPayment)) {
-    localOrder.status = 'cancelled';
+    return cancelUnpaidOrder(localOrder);
   } else if (isFailedMercadoPagoPayment(mercadoPagoPayment)) {
     localOrder.status = 'failed';
+    return cancelUnpaidOrder(localOrder);
   }
 
   await localOrder.save();
@@ -282,6 +353,10 @@ async function createOrderCheckout(localOrder, user, complex, paymentProvider, p
     fallbackEmail: user.email,
     providerMode: paymentProvider.accountSummary?.mode,
   });
+
+  localOrder.paymentMethod = 'ONLINE';
+  localOrder.checkoutState = CHECKOUT_PENDING_STATE;
+  localOrder.checkoutExpiresAt = getOrderCheckoutExpirationDate();
 
   const items = localOrder.items.map((item) => {
     const product = productsById.get(String(item.productId));
@@ -313,9 +388,10 @@ async function createOrderCheckout(localOrder, user, complex, paymentProvider, p
       entity: 'order',
       order_id: String(localOrder._id),
     },
+    expirationDateFrom: new Date(),
+    expirationDateTo: localOrder.checkoutExpiresAt,
   });
 
-  localOrder.paymentMethod = 'ONLINE';
   localOrder.mercadoPagoPreferenceId = String(preference?.id || '');
   await localOrder.save();
 
@@ -338,6 +414,26 @@ async function hydrateOrderRecord(orderId) {
     .populate('complexId', 'name')
     .populate('userId', 'displayName email')
     .populate('items.productId', 'name');
+}
+
+async function findReusableCheckoutOrder({
+  userId,
+  complexId,
+  normalizedItems,
+} = {}) {
+  const pendingOrders = await Order.find({
+    userId,
+    complexId,
+    paymentMethod: 'ONLINE',
+    status: 'pending',
+    checkoutState: CHECKOUT_PENDING_STATE,
+    checkoutExpiresAt: { $gt: new Date() },
+  }).sort({ createdAt: -1 });
+
+  const signature = buildOrderItemsSignature(normalizedItems);
+  return pendingOrders.find(
+    (order) => buildOrderItemsSignature(order.items) === signature,
+  ) || null;
 }
 
 async function loadOrderForUser(orderId, dbUser) {
@@ -384,6 +480,10 @@ export const createOrder = async (req, res) => {
       ? await getOwnerPaymentProvider(complex.ownerId)
       : { configured: false, publicKey: '', accountSummary: null };
     const paymentOptions = buildOrderPaymentOptions(paymentProvider);
+    await expireStaleOrderCheckouts({
+      userId: req.dbUser._id,
+      complexId,
+    });
 
     if (
       requestedPaymentMethod !== undefined &&
@@ -441,6 +541,36 @@ export const createOrder = async (req, res) => {
       onlineEnabled: paymentOptions.onlineEnabled,
     });
 
+    if (paymentMethod === 'ONLINE' && paymentOptions.onlineEnabled === true) {
+      const reusableOrder = await findReusableCheckoutOrder({
+        userId: req.dbUser._id,
+        complexId,
+        normalizedItems,
+      });
+
+      if (reusableOrder) {
+        try {
+          const checkout = await createOrderCheckout(
+            reusableOrder,
+            req.dbUser,
+            complex,
+            paymentProvider,
+            productsById,
+          );
+
+          return res.status(200).json({
+            order: serializeOrderRecord(checkout.order),
+            message: 'Checkout recuperado correctamente.',
+            paymentSession: checkout.paymentSession,
+            providerConfigured: true,
+          });
+        } catch (paymentError) {
+          await cancelUnpaidOrder(reusableOrder);
+          throw paymentError;
+        }
+      }
+    }
+
     const newOrder = new Order({
       userId: req.dbUser._id,
       complexId,
@@ -449,6 +579,10 @@ export const createOrder = async (req, res) => {
       totalAmount,
       status: 'pending',
       paymentMethod,
+      checkoutState:
+        paymentMethod === 'ONLINE' ? CHECKOUT_PENDING_STATE : ACTIVE_CHECKOUT_STATE,
+      checkoutExpiresAt:
+        paymentMethod === 'ONLINE' ? getOrderCheckoutExpirationDate() : null,
     });
 
     newOrder.externalReference = buildExternalReference(newOrder._id.toString());
@@ -465,8 +599,7 @@ export const createOrder = async (req, res) => {
           productsById,
         );
       } catch (paymentError) {
-        newOrder.status = 'failed';
-        await newOrder.save();
+        await cancelUnpaidOrder(newOrder);
         throw paymentError;
       }
 
@@ -551,7 +684,19 @@ export const processOrderPayment = async (req, res) => {
     const productIds = localOrder.items.map((item) => item.productId).filter(Boolean);
     const products = await Product.find({ _id: { $in: productIds } }).lean();
     const productsById = new Map(products.map((product) => [String(product._id), product]));
-    const checkout = await createOrderCheckout(localOrder, req.dbUser, localOrder.complexId, paymentProvider, productsById);
+    let checkout;
+    try {
+      checkout = await createOrderCheckout(
+        localOrder,
+        req.dbUser,
+        localOrder.complexId,
+        paymentProvider,
+        productsById,
+      );
+    } catch (paymentError) {
+      await cancelUnpaidOrder(localOrder);
+      throw paymentError;
+    }
 
     res.json({
       message: 'Checkout generado correctamente.',
@@ -594,8 +739,7 @@ export const syncOrderPayment = async (req, res) => {
     } else {
       const resultHint = String(req.body?.result || req.query?.result || '').toLowerCase();
       if (resultHint === 'failure' && syncedOrder.status !== 'completed') {
-        syncedOrder.status = 'cancelled';
-        await syncedOrder.save();
+        syncedOrder = await cancelUnpaidOrder(localOrder);
       }
     }
 
@@ -692,10 +836,14 @@ export const handleMercadoPagoOrderWebhook = async (req, res) => {
 
 export const getOrders = async (req, res) => {
   try {
-    const filter = {};
+    await expireStaleOrderCheckouts();
+
+    const filter = {
+      $and: [buildActiveOrderStateFilter()],
+    };
 
     if (req.dbUser.role === 'client') {
-      filter.userId = req.dbUser._id;
+      filter.$and.push({ userId: req.dbUser._id });
     } else if (req.dbUser.role === 'owner') {
       const ownedComplexes = await Complex.find({ ownerId: req.dbUser._id }).select('_id');
       const ownedComplexIds = ownedComplexes.map((complex) => complex._id.toString());
@@ -708,16 +856,16 @@ export const getOrders = async (req, res) => {
         if (!ownedComplexIds.includes(String(req.query.complexId))) {
           return res.status(403).json({ error: 'No autorizado para ver ordenes de ese complejo.' });
         }
-        filter.complexId = req.query.complexId;
+        filter.$and.push({ complexId: req.query.complexId });
       } else {
-        filter.complexId = { $in: ownedComplexIds };
+        filter.$and.push({ complexId: { $in: ownedComplexIds } });
       }
     } else if (req.query.complexId) {
-      filter.complexId = req.query.complexId;
+      filter.$and.push({ complexId: req.query.complexId });
     }
 
     if (req.query.status) {
-      filter.status = req.query.status;
+      filter.$and.push({ status: req.query.status });
     }
 
     const orders = await Order.find(filter)

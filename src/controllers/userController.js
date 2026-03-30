@@ -225,7 +225,19 @@ async function buildReservationStatsMap(match) {
 
 async function buildOrderStatsMap(match) {
   const rows = await Order.aggregate([
-    { $match: match },
+    {
+      $match: {
+        $and: [
+          match,
+          {
+            $or: [
+              { checkoutState: 'ACTIVE' },
+              { checkoutState: { $exists: false } },
+            ],
+          },
+        ],
+      },
+    },
     {
       $group: {
         _id: '$userId',
