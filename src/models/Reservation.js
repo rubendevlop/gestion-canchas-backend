@@ -9,6 +9,12 @@ const reservationSchema = new mongoose.Schema({
   endTime: { type: String, required: true },
   totalPrice: { type: Number, required: true },
   status: { type: String, enum: ['PENDING', 'CONFIRMED', 'CANCELLED'], default: 'PENDING' },
+  bookingState: {
+    type: String,
+    enum: ['ACTIVE', 'CHECKOUT_PENDING', 'CHECKOUT_FAILED', 'CHECKOUT_EXPIRED'],
+    default: 'ACTIVE',
+  },
+  checkoutExpiresAt: { type: Date, default: null },
   paymentStatus: { type: String, enum: ['UNPAID', 'PARTIAL', 'PAID', 'REFUNDED'], default: 'UNPAID' },
   paymentMethod: { type: String, enum: ['ON_SITE', 'ONLINE'], default: 'ON_SITE' },
   externalReference: { type: String, default: '', index: true },

@@ -37,6 +37,12 @@ import {
 import { normalizeBookingHours } from '../utils/bookingHours.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
+const ACTIVE_BOOKING_STATE = 'ACTIVE';
+const CHECKOUT_PENDING_BOOKING_STATE = 'CHECKOUT_PENDING';
+const CHECKOUT_FAILED_BOOKING_STATE = 'CHECKOUT_FAILED';
+const CHECKOUT_EXPIRED_BOOKING_STATE = 'CHECKOUT_EXPIRED';
+const RESERVATION_CHECKOUT_WINDOW_MINUTES = 10;
+
 async function ensureOwnerOwnsComplex(complexId, dbUser) {
   if (dbUser.role === 'superadmin') return;
 
@@ -85,6 +91,84 @@ function buildReservationNotificationUrl(reservation, complex) {
 
 function buildReservationDescription(reservation, court, complex) {
   return `Reserva ${complex?.name || 'Clubes Tucumán'} - ${court?.name || 'Cancha'} - ${reservation.startTime}`;
+}
+
+function getReservationCheckoutExpirationDate(baseDate = new Date()) {
+  return new Date(baseDate.getTime() + RESERVATION_CHECKOUT_WINDOW_MINUTES * 60 * 1000);
+}
+
+function buildActiveReservationStateFilter() {
+  return {
+    $or: [
+      { bookingState: ACTIVE_BOOKING_STATE },
+      { bookingState: { $exists: false } },
+    ],
+  };
+}
+
+function buildPendingCheckoutFilter({ now = new Date(), excludeUserId = null } = {}) {
+  const filter = {
+    bookingState: CHECKOUT_PENDING_BOOKING_STATE,
+    checkoutExpiresAt: { $gt: now },
+  };
+
+  if (excludeUserId) {
+    filter.user = { $ne: excludeUserId };
+  }
+
+  return filter;
+}
+
+async function expireStaleReservationCheckouts(filter = {}) {
+  const now = new Date();
+
+  await Reservation.updateMany(
+    {
+      bookingState: CHECKOUT_PENDING_BOOKING_STATE,
+      checkoutExpiresAt: { $lte: now },
+      ...filter,
+    },
+    {
+      $set: {
+        bookingState: CHECKOUT_EXPIRED_BOOKING_STATE,
+        checkoutExpiresAt: null,
+        status: 'CANCELLED',
+        paymentStatus: 'UNPAID',
+        paidAt: null,
+      },
+    },
+  );
+}
+
+function buildReservationClashQuery({
+  courtId,
+  date,
+  startTime,
+  excludeReservationId = null,
+  excludePendingCheckoutUserId = null,
+} = {}) {
+  const baseFilter = { court: courtId, date, startTime };
+
+  if (excludeReservationId) {
+    baseFilter._id = { $ne: excludeReservationId };
+  }
+
+  return {
+    $and: [
+      baseFilter,
+      {
+        $or: [
+          {
+            $and: [
+              buildActiveReservationStateFilter(),
+              { status: { $ne: 'CANCELLED' } },
+            ],
+          },
+          buildPendingCheckoutFilter({ excludeUserId: excludePendingCheckoutUserId }),
+        ],
+      },
+    ],
+  };
 }
 
 function normalizeReservationPaymentMethod(value, fallback = '') {
@@ -214,12 +298,50 @@ function applyPaymentSnapshotToReservation(reservation, snapshot) {
   reservation.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
 }
 
-async function cancelUnpaidReservation(reservation) {
+async function activateReservationAfterCheckout(reservation) {
+  await expireStaleReservationCheckouts({
+    court: reservation.court?._id || reservation.court,
+    date: reservation.date,
+    startTime: reservation.startTime,
+  });
+
+  const clash = await Reservation.findOne(
+    buildReservationClashQuery({
+      courtId: reservation.court?._id || reservation.court,
+      date: reservation.date,
+      startTime: reservation.startTime,
+      excludeReservationId: reservation._id,
+    }),
+  ).select('_id');
+
+  if (clash) {
+    const error = new Error('El horario ya no esta disponible.');
+    error.status = 409;
+    throw error;
+  }
+
+  reservation.bookingState = ACTIVE_BOOKING_STATE;
+  reservation.checkoutExpiresAt = null;
+
+  if (reservation.status !== 'CANCELLED') {
+    reservation.status = 'CONFIRMED';
+  }
+}
+
+async function cancelUnpaidReservation(
+  reservation,
+  bookingState = CHECKOUT_FAILED_BOOKING_STATE,
+) {
   reservation.paymentStatus = 'UNPAID';
   reservation.paidAt = null;
+  reservation.checkoutExpiresAt = null;
 
   if (reservation.status !== 'CANCELLED') {
     reservation.status = 'CANCELLED';
+  }
+
+  if (reservation.bookingState === CHECKOUT_PENDING_BOOKING_STATE) {
+    reservation.bookingState = bookingState;
   }
 
   await reservation.save();
@@ -294,7 +416,9 @@ async function syncReservationFromMercadoPagoOrder(reservation, mercadoPagoOrder
     reservation.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
     reservation.refundedAt = null;
     reservation.refundAmount = 0;
-    if (reservation.status === 'PENDING') {
+    if (reservation.bookingState === CHECKOUT_PENDING_BOOKING_STATE) {
+      await activateReservationAfterCheckout(reservation);
+    } else if (reservation.status === 'PENDING') {
       reservation.status = 'CONFIRMED';
     }
   } else if (isRefundedMercadoPagoOrder(mercadoPagoOrder)) {
@@ -326,7 +450,9 @@ async function syncReservationFromMercadoPagoPayment(reservation, mercadoPagoPay
     reservation.paidAt = snapshot.approvedAt ? new Date(snapshot.approvedAt) : new Date();
     reservation.refundedAt = null;
     reservation.refundAmount = 0;
-    if (reservation.status === 'PENDING') {
+    if (reservation.bookingState === CHECKOUT_PENDING_BOOKING_STATE) {
+      await activateReservationAfterCheckout(reservation);
+    } else if (reservation.status === 'PENDING') {
       reservation.status = 'CONFIRMED';
     }
   } else if (isRefundedMercadoPagoPayment(mercadoPagoPayment)) {
@@ -361,6 +487,10 @@ async function createReservationCheckout(reservation, user, paymentProvider) {
     providerMode: paymentProvider.accountSummary?.mode,
   });
 
+  reservation.paymentMethod = 'ONLINE';
+  reservation.bookingState = CHECKOUT_PENDING_BOOKING_STATE;
+  reservation.checkoutExpiresAt = getReservationCheckoutExpirationDate();
+
   const preference = await createCheckoutPreference({
     externalReference: reservation.externalReference,
     accessToken: paymentProvider.accessToken,
@@ -388,9 +518,10 @@ async function createReservationCheckout(reservation, user, paymentProvider) {
       entity: 'reservation',
       reservation_id: String(reservation._id),
     },
+    expirationDateFrom: new Date(),
+    expirationDateTo: reservation.checkoutExpiresAt,
   });
 
-  reservation.paymentMethod = 'ONLINE';
   reservation.mercadoPagoPreferenceId = String(preference?.id || '');
   await reservation.save();
 
@@ -474,16 +605,11 @@ export const createReservation = async (req, res) => {
     }
 
     const dateObj = new Date(date);
-    const clash = await Reservation.findOne({
+    await expireStaleReservationCheckouts({
       court: courtId,
       date: dateObj,
       startTime,
-      status: { $ne: 'CANCELLED' },
     });
-
-    if (clash) {
-      return res.status(409).json({ message: 'El horario ya esta reservado.' });
-    }
 
     const availableBookingHours = normalizeBookingHours(court.bookingHours);
     if (!availableBookingHours.includes(startTime)) {
@@ -530,6 +656,55 @@ export const createReservation = async (req, res) => {
       });
     }
 
+    if (paymentMethod === 'ONLINE') {
+      const pendingCheckoutReservation = await Reservation.findOne({
+        user: user._id,
+        court: court._id,
+        date: dateObj,
+        startTime,
+        bookingState: CHECKOUT_PENDING_BOOKING_STATE,
+        checkoutExpiresAt: { $gt: new Date() },
+      });
+
+      if (pendingCheckoutReservation) {
+        try {
+          const checkout = await createReservationCheckout(
+            pendingCheckoutReservation,
+            user,
+            paymentProvider,
+          );
+
+          return res.status(200).json({
+            reservation: serializeReservationRecord(checkout.reservation),
+            providerConfigured: true,
+            paymentSession: checkout.paymentSession,
+          });
+        } catch (paymentError) {
+          await cancelUnpaidReservation(pendingCheckoutReservation);
+
+          const error = new Error(
+            `${paymentError.message || 'No se pudo generar el checkout de Mercado Pago.'} El intento de reserva fue liberado.`,
+          );
+          error.status = paymentError.status || 400;
+          throw error;
+        }
+      }
+    }
+
+    const clash = await Reservation.findOne(
+      buildReservationClashQuery({
+        courtId,
+        date: dateObj,
+        startTime,
+        excludePendingCheckoutUserId:
+          user.role === 'client' ? user._id : null,
+      }),
+    );
+
+    if (clash) {
+      return res.status(409).json({ message: 'El horario ya esta reservado.' });
+    }
+
     const reservation = new Reservation({
       user: user._id,
       court: court._id,
@@ -539,6 +714,9 @@ export const createReservation = async (req, res) => {
       endTime,
       totalPrice: court.pricePerHour,
       status: 'PENDING',
+      bookingState: paymentMethod === 'ONLINE' ? CHECKOUT_PENDING_BOOKING_STATE : ACTIVE_BOOKING_STATE,
+      checkoutExpiresAt:
+        paymentMethod === 'ONLINE' ? getReservationCheckoutExpirationDate() : null,
       paymentMethod,
       externalReference: `reservation-draft-${user._id}-${Date.now()}`,
     });
@@ -582,7 +760,12 @@ export const createReservation = async (req, res) => {
 
 export const getMyReservations = async (req, res) => {
   try {
-    const reservations = await Reservation.find({ user: req.dbUser._id })
+    const reservations = await Reservation.find({
+      $and: [
+        { user: req.dbUser._id },
+        buildActiveReservationStateFilter(),
+      ],
+    })
       .populate('court', 'name sport pricePerHour complexId')
       .populate('complexId', 'name')
       .sort({ date: -1 });
@@ -612,11 +795,11 @@ export const getTakenSlots = async (req, res) => {
       return res.status(400).json({ message: 'courtId y date son requeridos.' });
     }
 
-    const reservations = await Reservation.find({
+    const dateObj = new Date(date);
+    await expireStaleReservationCheckouts({
       court: courtId,
-      date: new Date(date),
-      status: { $ne: 'CANCELLED' },
-    }).select('startTime');
+      date: dateObj,
+    });
 
     if (req.dbUser.role === 'client') {
       const court = await Court.findById(courtId).select('complexId');
@@ -625,6 +808,25 @@ export const getTakenSlots = async (req, res) => {
       }
       await assertComplexClientAccess(court.complexId, { createBillingIfMissing: true });
     }
+
+    const reservations = await Reservation.find({
+      $and: [
+        { court: courtId, date: dateObj },
+        {
+          $or: [
+            {
+              $and: [
+                buildActiveReservationStateFilter(),
+                { status: { $ne: 'CANCELLED' } },
+              ],
+            },
+            buildPendingCheckoutFilter({
+              excludeUserId: req.dbUser.role === 'client' ? req.dbUser._id : null,
+            }),
+          ],
+        },
+      ],
+    }).select('startTime');
 
     res.json({ takenHours: reservations.map((reservation) => reservation.startTime) });
   } catch (error) {
@@ -943,33 +1145,35 @@ export const handleMercadoPagoReservationWebhook = async (req, res) => {
 export const getComplexReservations = async (req, res) => {
   try {
     const { complexId, date, status, paymentStatus, userId } = req.query;
-    const filter = {};
+    const filter = {
+      $and: [buildActiveReservationStateFilter()],
+    };
 
     if (complexId) {
       await ensureOwnerOwnsComplex(complexId, req.dbUser);
-      filter.complexId = complexId;
+      filter.$and.push({ complexId });
     } else if (req.dbUser.role === 'owner') {
       const ownedComplex = await Complex.findOne({ ownerId: req.dbUser._id }).select('_id');
       if (!ownedComplex) {
         return res.json([]);
       }
-      filter.complexId = ownedComplex._id;
+      filter.$and.push({ complexId: ownedComplex._id });
     }
 
     if (date) {
-      filter.date = new Date(date);
+      filter.$and.push({ date: new Date(date) });
     }
 
     if (status) {
-      filter.status = status;
+      filter.$and.push({ status });
     }
 
     if (paymentStatus) {
-      filter.paymentStatus = paymentStatus;
+      filter.$and.push({ paymentStatus });
     }
 
     if (userId) {
-      filter.user = userId;
+      filter.$and.push({ user: userId });
     }
 
     const reservations = await Reservation.find(filter)

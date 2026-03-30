@@ -297,6 +297,8 @@ export async function createCheckoutPreference({
   accessToken = '',
   metadata = undefined,
   statementDescriptor = '',
+  expirationDateFrom = null,
+  expirationDateTo = null,
 } = {}) {
   const normalizedReference = normalizeExternalReference(externalReference);
   const normalizedIdentification = normalizePayerIdentification(payer.identification);
@@ -322,6 +324,18 @@ export async function createCheckoutPreference({
     },
     auto_return: 'approved',
   };
+
+  if (expirationDateFrom || expirationDateTo) {
+    payload.expires = true;
+  }
+
+  if (expirationDateFrom) {
+    payload.expiration_date_from = new Date(expirationDateFrom).toISOString();
+  }
+
+  if (expirationDateTo) {
+    payload.expiration_date_to = new Date(expirationDateTo).toISOString();
+  }
 
   if (notificationUrl && isPublicHttpUrl(notificationUrl)) {
     payload.notification_url = notificationUrl;
