@@ -34,6 +34,13 @@ import {
   resolveMercadoPagoPayerEmail,
   validateMercadoPagoWebhookSignature,
 } from '../utils/mercadoPago.js';
+import {
+  buildHourRangeFromStart,
+  getPastBookingHoursForDate,
+  isBookingSlotInPast,
+  normalizeBookingDate,
+  toBookingDateUtc,
+} from '../utils/bookingAvailability.js';
 import { normalizeBookingHours } from '../utils/bookingHours.js';
 import { assertComplexClientAccess } from '../utils/ownerBilling.js';
 
@@ -593,6 +600,11 @@ export const createReservation = async (req, res) => {
       return res.status(400).json({ message: 'courtId, date y startTime son requeridos.' });
     }
 
+    const normalizedDate = normalizeBookingDate(date);
+    if (!normalizedDate) {
+      return res.status(400).json({ message: 'date debe tener formato YYYY-MM-DD.' });
+    }
+
     const court = await Court.findById(courtId);
     if (!court) {
       return res.status(404).json({ message: 'Cancha no encontrada' });
@@ -604,7 +616,11 @@ export const createReservation = async (req, res) => {
       await assertComplexClientAccess(court.complexId, { createBillingIfMissing: true });
     }
 
-    const dateObj = new Date(date);
+    const dateObj = toBookingDateUtc(normalizedDate);
+    if (!dateObj) {
+      return res.status(400).json({ message: 'date debe tener formato YYYY-MM-DD.' });
+    }
+
     await expireStaleReservationCheckouts({
       court: courtId,
       date: dateObj,
@@ -616,8 +632,13 @@ export const createReservation = async (req, res) => {
       return res.status(409).json({ message: 'Ese horario no esta habilitado para esta cancha.' });
     }
 
-    const [hour, minute] = startTime.split(':').map(Number);
-    const endTime = `${String(hour + 1).padStart(2, '0')}:${String(minute).padStart(2, '0')}`;
+    if (isBookingSlotInPast({ date: normalizedDate, startTime })) {
+      return res.status(409).json({
+        message: 'Ese horario ya paso. Elige un horario actual o futuro.',
+      });
+    }
+
+    const endTime = buildHourRangeFromStart(startTime);
 
     let complex = null;
     let paymentProvider = { configured: false, publicKey: '', accountSummary: null };
@@ -795,17 +816,27 @@ export const getTakenSlots = async (req, res) => {
       return res.status(400).json({ message: 'courtId y date son requeridos.' });
     }
 
-    const dateObj = new Date(date);
+    const normalizedDate = normalizeBookingDate(date);
+    if (!normalizedDate) {
+      return res.status(400).json({ message: 'date debe tener formato YYYY-MM-DD.' });
+    }
+
+    const dateObj = toBookingDateUtc(normalizedDate);
+    if (!dateObj) {
+      return res.status(400).json({ message: 'date debe tener formato YYYY-MM-DD.' });
+    }
+
     await expireStaleReservationCheckouts({
       court: courtId,
       date: dateObj,
     });
 
+    const court = await Court.findById(courtId).select('bookingHours complexId');
+    if (!court) {
+      return res.status(404).json({ message: 'Cancha no encontrada' });
+    }
+
     if (req.dbUser.role === 'client') {
-      const court = await Court.findById(courtId).select('complexId');
-      if (!court) {
-        return res.status(404).json({ message: 'Cancha no encontrada' });
-      }
       await assertComplexClientAccess(court.complexId, { createBillingIfMissing: true });
     }
 
@@ -828,7 +859,12 @@ export const getTakenSlots = async (req, res) => {
       ],
     }).select('startTime');
 
-    res.json({ takenHours: reservations.map((reservation) => reservation.startTime) });
+    const unavailableHours = new Set([
+      ...reservations.map((reservation) => reservation.startTime),
+      ...getPastBookingHoursForDate(court.bookingHours, normalizedDate),
+    ]);
+
+    res.json({ takenHours: [...unavailableHours].sort((left, right) => left.localeCompare(right)) });
   } catch (error) {
     res.status(error.status || 500).json({ message: 'Error obteniendo slots', error: error.message });
   }
@@ -971,6 +1007,13 @@ export const processReservationPayment = async (req, res) => {
   try {
     const { id } = req.params;
     const reservation = await loadReservationForPayment(id, req.dbUser);
+
+    if (isBookingSlotInPast({ date: reservation.date, startTime: reservation.startTime })) {
+      return res.status(409).json({
+        message: 'La reserva ya paso y no puede pagarse online.',
+      });
+    }
+
     await assertComplexClientAccess(reservation.complexId?._id || reservation.complexId, {
       createBillingIfMissing: true,
     });
