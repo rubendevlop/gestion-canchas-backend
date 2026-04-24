@@ -2,6 +2,11 @@ import Complex from '../models/Complex.js';
 import Court from '../models/Court.js';
 import Reservation from '../models/Reservation.js';
 import {
+  sendReservationCancelledEmail,
+  sendReservationConfirmedEmail,
+  sendReservationCreatedEmail,
+  sendReservationOwnerCancelledEmail,
+  sendReservationOwnerCreatedEmail,
   sendReservationOwnerPaidEmail,
   sendReservationPaidEmail,
 } from '../utils/emailNotifications.js';
@@ -355,6 +360,164 @@ async function cancelUnpaidReservation(
   return reservation;
 }
 
+function buildNotificationActor(dbUser = null) {
+  if (!dbUser) {
+    return { role: 'system', displayName: 'el sistema' };
+  }
+
+  return {
+    role: dbUser.role,
+    displayName: dbUser.displayName || dbUser.email || '',
+    email: dbUser.email || '',
+  };
+}
+
+async function hydrateReservationForNotifications(reservation) {
+  if (!reservation?._id) {
+    return null;
+  }
+
+  return Reservation.findById(reservation._id)
+    .populate('user', 'displayName email')
+    .populate('court', 'name sport')
+    .populate({
+      path: 'complexId',
+      select: 'name ownerId',
+      populate: {
+        path: 'ownerId',
+        select: 'displayName email',
+      },
+    });
+}
+
+async function maybeSendReservationCreatedEmails(reservation) {
+  if (!reservation || resolveReservationPaymentMethod(reservation) !== 'ON_SITE') {
+    return;
+  }
+
+  const hydratedReservation = await hydrateReservationForNotifications(reservation);
+  if (!hydratedReservation) {
+    return;
+  }
+
+  let shouldSave = false;
+
+  if (!reservation.createdEmailSentAt && hydratedReservation.user?.email) {
+    const clientResult = await sendReservationCreatedEmail({
+      reservation: hydratedReservation,
+      user: hydratedReservation.user,
+      court: hydratedReservation.court,
+      complex: hydratedReservation.complexId,
+    });
+
+    if (clientResult?.sent) {
+      reservation.createdEmailSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (
+    !reservation.ownerCreatedNotificationSentAt &&
+    hydratedReservation.complexId?.ownerId?.email
+  ) {
+    const ownerResult = await sendReservationOwnerCreatedEmail({
+      reservation: hydratedReservation,
+      owner: hydratedReservation.complexId.ownerId,
+      user: hydratedReservation.user,
+      court: hydratedReservation.court,
+      complex: hydratedReservation.complexId,
+    });
+
+    if (ownerResult?.sent) {
+      reservation.ownerCreatedNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
+    await reservation.save();
+  }
+}
+
+async function maybeSendReservationManualConfirmationEmail(reservation) {
+  if (
+    !reservation ||
+    reservation.status !== 'CONFIRMED' ||
+    resolveReservationPaymentMethod(reservation) !== 'ON_SITE' ||
+    reservation.manualConfirmationEmailSentAt
+  ) {
+    return;
+  }
+
+  const hydratedReservation = await hydrateReservationForNotifications(reservation);
+  if (!hydratedReservation?.user?.email) {
+    return;
+  }
+
+  const result = await sendReservationConfirmedEmail({
+    reservation: hydratedReservation,
+    user: hydratedReservation.user,
+    court: hydratedReservation.court,
+    complex: hydratedReservation.complexId,
+  });
+
+  if (result?.sent) {
+    reservation.manualConfirmationEmailSentAt = new Date();
+    await reservation.save();
+  }
+}
+
+async function maybeSendReservationCancellationEmails(reservation, cancelledBy = null) {
+  if (!reservation || reservation.status !== 'CANCELLED') {
+    return;
+  }
+
+  const hydratedReservation = await hydrateReservationForNotifications(reservation);
+  if (!hydratedReservation) {
+    return;
+  }
+
+  let shouldSave = false;
+
+  if (!reservation.cancellationEmailSentAt && hydratedReservation.user?.email) {
+    const clientResult = await sendReservationCancelledEmail({
+      reservation: hydratedReservation,
+      user: hydratedReservation.user,
+      court: hydratedReservation.court,
+      complex: hydratedReservation.complexId,
+      cancelledBy,
+    });
+
+    if (clientResult?.sent) {
+      reservation.cancellationEmailSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (
+    !reservation.ownerCancellationNotificationSentAt &&
+    hydratedReservation.complexId?.ownerId?.email
+  ) {
+    const ownerResult = await sendReservationOwnerCancelledEmail({
+      reservation: hydratedReservation,
+      owner: hydratedReservation.complexId.ownerId,
+      user: hydratedReservation.user,
+      court: hydratedReservation.court,
+      complex: hydratedReservation.complexId,
+      cancelledBy,
+    });
+
+    if (ownerResult?.sent) {
+      reservation.ownerCancellationNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
+    await reservation.save();
+  }
+}
+
 async function maybeSendReservationConfirmationEmail(reservation) {
   if (!reservation || reservation.paymentStatus !== 'PAID') {
     return;
@@ -366,10 +529,7 @@ async function maybeSendReservationConfirmationEmail(reservation) {
     reservation.complexId?.name &&
     reservation.complexId?.ownerId?.email
       ? reservation
-      : await Reservation.findById(reservation._id)
-          .populate('user', 'displayName email')
-          .populate('court', 'name sport')
-          .populate('complexId', 'name ownerId');
+      : await hydrateReservationForNotifications(reservation);
 
   if (!hydratedReservation) {
     return;
@@ -746,6 +906,10 @@ export const createReservation = async (req, res) => {
 
     const saved = await reservation.save();
 
+    if (saved.paymentMethod === 'ON_SITE') {
+      await maybeSendReservationCreatedEmails(saved);
+    }
+
     if (saved.paymentMethod === 'ONLINE' && paymentOptions.onlineEnabled === true) {
       try {
         const checkout = await createReservationCheckout(saved, user, paymentProvider);
@@ -893,6 +1057,10 @@ export const cancelReservation = async (req, res) => {
 
     reservation.status = 'CANCELLED';
     await reservation.save();
+    await maybeSendReservationCancellationEmails(
+      reservation,
+      buildNotificationActor(req.dbUser),
+    );
     res.json({ message: 'Reserva cancelada', reservation: serializeReservationRecord(reservation) });
   } catch (error) {
     res.status(500).json({ message: 'Error cancelando la reserva', error: error.message });
@@ -997,6 +1165,7 @@ export const confirmReservation = async (req, res) => {
 
     reservation.status = 'CONFIRMED';
     await reservation.save();
+    await maybeSendReservationManualConfirmationEmail(reservation);
     res.json({ message: 'Reserva confirmada', reservation: serializeReservationRecord(reservation) });
   } catch (error) {
     res.status(error.status || 500).json({ message: error.message || 'Error confirmando la reserva' });

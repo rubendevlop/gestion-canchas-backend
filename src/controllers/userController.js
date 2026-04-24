@@ -4,6 +4,7 @@ import Court from '../models/Court.js';
 import Order from '../models/Order.js';
 import Reservation from '../models/Reservation.js';
 import {
+  sendAdminUserRegistrationEmail,
   sendAdminOwnerApplicationEmail,
   sendOwnerApplicationPendingEmail,
   sendOwnerStatusEmail,
@@ -444,6 +445,7 @@ export const registerUser = async (req, res) => {
       await sendAdminOwnerApplicationEmail(user);
     } else {
       await sendWelcomeEmail(user);
+      await sendAdminUserRegistrationEmail(user);
     }
 
     res.status(201).json(await buildUserResponse(user, { createBillingIfMissing: false }));

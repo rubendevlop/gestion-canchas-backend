@@ -4,6 +4,7 @@ const complexSchema = new mongoose.Schema({
   name: { type: String, required: true },
   address: { type: String, required: true },
   phone: { type: String },
+  amenities: { type: [String], default: [] },
   logo: { type: String, default: '' },
   logoPublicId: { type: String, default: '' },
   openingHours: {

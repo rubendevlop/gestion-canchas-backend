@@ -1,10 +1,18 @@
 import express from 'express';
-import { createComplex, getComplexes, getComplexById, getMyComplex, updateComplex } from '../controllers/complexController.js';
+import {
+  createComplex,
+  discoverComplexes,
+  getComplexes,
+  getComplexById,
+  getMyComplex,
+  updateComplex,
+} from '../controllers/complexController.js';
 import { verifyAuth, requireOwnerBillingAccess, requireRole } from '../middlewares/authMiddleware.js';
 
 const router = express.Router();
 
 // Públicas
+router.get('/discovery', discoverComplexes);
 router.get('/', getComplexes);
 
 // Privadas

@@ -8,6 +8,7 @@ const courtSchema = new mongoose.Schema({
   capacity: { type: Number, required: true },
   pricePerHour: { type: Number, required: true },
   bookingHours: { type: [String], default: () => [...DEFAULT_BOOKING_HOURS] },
+  features: { type: [String], default: [] },
   isAvailable: { type: Boolean, default: true },
   image: { type: String, default: '' },
   imagePublicId: { type: String, default: '' },

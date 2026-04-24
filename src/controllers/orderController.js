@@ -1,7 +1,14 @@
 import Complex from '../models/Complex.js';
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
-import { sendOrderOwnerPaidEmail, sendOrderPaidEmail } from '../utils/emailNotifications.js';
+import {
+  sendOrderCancelledEmail,
+  sendOrderCreatedEmail,
+  sendOrderOwnerCancelledEmail,
+  sendOrderOwnerCreatedEmail,
+  sendOrderOwnerPaidEmail,
+  sendOrderPaidEmail,
+} from '../utils/emailNotifications.js';
 import { getOwnerPaymentProvider } from '../utils/paymentAccounts.js';
 import { validateMercadoPagoWebhookSignature } from '../utils/mercadoPago.js';
 import {
@@ -232,6 +239,126 @@ function applyPaymentSnapshotToOrder(order, snapshot) {
   order.mercadoPagoPaymentMethodType = snapshot.paymentMethodType;
 }
 
+function buildNotificationActor(dbUser = null) {
+  if (!dbUser) {
+    return { role: 'system', displayName: 'el sistema' };
+  }
+
+  return {
+    role: dbUser.role,
+    displayName: dbUser.displayName || dbUser.email || '',
+    email: dbUser.email || '',
+  };
+}
+
+async function hydrateOrderForNotifications(order) {
+  if (!order?._id) {
+    return null;
+  }
+
+  return Order.findById(order._id)
+    .populate('userId', 'displayName email')
+    .populate({
+      path: 'complexId',
+      select: 'name ownerId',
+      populate: {
+        path: 'ownerId',
+        select: 'displayName email',
+      },
+    })
+    .populate('items.productId', 'name');
+}
+
+async function maybeSendOrderCreatedEmails(order) {
+  if (!order || resolveOrderPaymentMethod(order) !== 'ON_SITE') {
+    return;
+  }
+
+  const hydratedOrder = await hydrateOrderForNotifications(order);
+  if (!hydratedOrder) {
+    return;
+  }
+
+  let shouldSave = false;
+
+  if (!order.createdEmailSentAt && hydratedOrder.userId?.email) {
+    const clientResult = await sendOrderCreatedEmail({
+      order: hydratedOrder,
+      user: hydratedOrder.userId,
+      complex: hydratedOrder.complexId,
+    });
+
+    if (clientResult?.sent) {
+      order.createdEmailSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (!order.ownerCreatedNotificationSentAt && hydratedOrder.complexId?.ownerId?.email) {
+    const ownerResult = await sendOrderOwnerCreatedEmail({
+      order: hydratedOrder,
+      owner: hydratedOrder.complexId.ownerId,
+      user: hydratedOrder.userId,
+      complex: hydratedOrder.complexId,
+    });
+
+    if (ownerResult?.sent) {
+      order.ownerCreatedNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
+    await order.save();
+  }
+}
+
+async function maybeSendOrderCancellationEmails(order, cancelledBy = null) {
+  if (!order || order.status !== 'cancelled') {
+    return;
+  }
+
+  const hydratedOrder = await hydrateOrderForNotifications(order);
+  if (!hydratedOrder) {
+    return;
+  }
+
+  let shouldSave = false;
+
+  if (!order.cancellationEmailSentAt && hydratedOrder.userId?.email) {
+    const clientResult = await sendOrderCancelledEmail({
+      order: hydratedOrder,
+      user: hydratedOrder.userId,
+      complex: hydratedOrder.complexId,
+      cancelledBy,
+    });
+
+    if (clientResult?.sent) {
+      order.cancellationEmailSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (!order.ownerCancellationNotificationSentAt && hydratedOrder.complexId?.ownerId?.email) {
+    const ownerResult = await sendOrderOwnerCancelledEmail({
+      order: hydratedOrder,
+      owner: hydratedOrder.complexId.ownerId,
+      user: hydratedOrder.userId,
+      complex: hydratedOrder.complexId,
+      cancelledBy,
+    });
+
+    if (ownerResult?.sent) {
+      order.ownerCancellationNotificationSentAt = new Date();
+      shouldSave = true;
+    }
+  }
+
+  if (shouldSave) {
+    await order.save();
+  }
+}
+
 async function maybeSendOrderConfirmationEmail(order) {
   if (!order || order.status !== 'completed') {
     return;
@@ -240,10 +367,7 @@ async function maybeSendOrderConfirmationEmail(order) {
   const hydratedOrder =
     order.userId?.email && order.complexId?.name && order.complexId?.ownerId?.email
       ? order
-      : await Order.findById(order._id)
-          .populate('userId', 'displayName email')
-          .populate('complexId', 'name ownerId')
-          .populate('items.productId', 'name');
+      : await hydrateOrderForNotifications(order);
 
   if (!hydratedOrder) {
     return;
@@ -588,6 +712,10 @@ export const createOrder = async (req, res) => {
     newOrder.externalReference = buildExternalReference(newOrder._id.toString());
     await newOrder.save();
 
+    if (newOrder.paymentMethod === 'ON_SITE') {
+      await maybeSendOrderCreatedEmails(newOrder);
+    }
+
     if (newOrder.paymentMethod === 'ONLINE' && paymentOptions.onlineEnabled === true) {
       let checkout;
       try {
@@ -648,6 +776,11 @@ export const updateOrderOwnerStatus = async (req, res) => {
 
     if (requestedStatus === 'completed') {
       await maybeSendOrderConfirmationEmail(localOrder);
+    } else if (requestedStatus === 'cancelled') {
+      await maybeSendOrderCancellationEmails(
+        localOrder,
+        buildNotificationActor(req.dbUser),
+      );
     }
 
     const hydratedOrder = await hydrateOrderRecord(localOrder._id);
